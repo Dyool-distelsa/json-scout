@@ -32,7 +32,7 @@ Out: new file formats, settings UI for the pipeline, changing the existing toolb
 - [x] T2 Paste handler in the editor wired to the helper, with the whole-document rule and toasts.
 - [x] T3 Copy button, top-right of the editor, with helper tests where logic is pure.
 - [x] T4 File dropdown menu (Open, Save, Save As), accessible: aria attributes, Escape and outside-click close, keyboard reachable.
-- [ ] T5 README feature list update, full checks, push branch, open descriptive PR. (README and checks done by writer; push and PR pending (parent))
+- [x] T5 README feature list update, full checks, push branch, open descriptive PR. (PR #1 opened against main)
 
 ## Acceptance criteria
 - `npm test` and `npm run build` pass; `cargo test` unaffected.
@@ -55,7 +55,7 @@ Resolved TDD: on (Strict TDD Mode, project config); runner `npm test` (vitest ru
 - T5 (writer part): README feature list and layout updated. Final `npm test`: 21 files, 308 tests passed. `npm run build`: ok (existing chunk-size warning only). `cargo test` not run (src-tauri untouched).
 - Not verified: no real-window check. Untested beyond unit tests and build: paste interception in CodeMirror, toasts on paste, Copy button placement/focus ring/clipboard in the Tauri webview, File menu rendering, positioning, focus handling and both themes.
 
-T5 remaining: push and PR pending (parent).
+T5: parent re-ran `npm test` (308 passed) and `npm run build` (ok), spot-checked the pipeline (`{'b':1,'a':[1,2,],}` -> sorted, formatted JSON; garbage returned untouched), pushed the branch and opened PR #1 with a descriptive body.
 
 ## Next step
-Parent verifies, pushes and opens the PR (push and PR pending (parent)).
+User reviews PR #1; manual pass in the desktop app for the untested UI behaviours listed above.

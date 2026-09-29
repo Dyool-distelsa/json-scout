@@ -34,7 +34,9 @@ On Linux the installed desktop entry registers JSON Scout as a JSON handler, so 
 - **Sort keys** recursively, alphabetically
 - **Escape / Unescape** JSON string content
 - **Stats**: byte size, line count, max depth, total keys, array count, type histogram
-- Native **Open** and **Save As** dialogs (`tauri-plugin-dialog`); Save writes atomically back to the opened file
+- **File menu** grouping Open, Save and Save As (keyboard accessible: arrow keys, Escape, outside click); native dialogs via `tauri-plugin-dialog`, and Save writes atomically back to the opened file
+- **Auto-clean on paste**: pasting into an empty editor, or over a selection that covers the whole document, validates, repairs, sorts keys and formats the text using the current indent. Text that cannot be repaired is pasted as-is with a notice; pasting a fragment into existing content stays a plain paste
+- **Copy button** in the top-right corner of the editor copies the full editor content
 - Toast notifications (e.g. minify saving), dark/light theme, collapsible sidebar and side panel, drag-and-drop, non-blocking error banners
 - Debounced re-processing with a lazily rendered tree, so large documents stay responsive
 
@@ -117,10 +119,10 @@ The workflow can also be run manually from the Actions tab (`workflow_dispatch`,
 ```
 src/                    Vanilla JS + Vite frontend
   tools/                Pure, TDD'd JSON functions (format, minify, validate, repair,
-                         diff, tree, query, convert, sortKeys, escape, stats)
+                         diff, tree, query, convert, sortKeys, escape, stats, pastePipeline)
   ui/                    DOM glue: editor (CodeMirror 6), toolbar, sidebar, right panel,
                          status bar, theme, toasts, debounce, runtime detection,
-                         drag-and-drop, settings
+                         drag-and-drop, settings, file menu, clipboard, paste rules
   styles/main.css        Dark/light theme via CSS custom properties
   main.js                Entry point, wiring, keyboard shortcuts
 

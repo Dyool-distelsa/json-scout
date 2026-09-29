@@ -440,6 +440,53 @@ body {
   overflow: hidden;
 }
 
+.editor-pane__primary {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+/* Copy button: overlay in the top-right corner of the primary editor. The
+   right offset clears the vertical scrollbar so it never covers it. */
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 24px;
+  z-index: 5;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.copy-btn:hover {
+  opacity: 1;
+  border-color: var(--color-accent);
+}
+
+.copy-btn:active {
+  transform: scale(0.96);
+}
+
+.copy-btn:focus {
+  outline: none;
+}
+
+.copy-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
 .editor-pane[data-mode='diff'] .editor {
   border-right: 1px solid var(--color-border);
 }

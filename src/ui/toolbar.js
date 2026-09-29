@@ -1,7 +1,9 @@
+import { createDropdownMenu } from './fileMenu.js';
+
 /**
  * Build the main toolbar. `handlers` is a map of action name -> callback,
  * e.g. { format, minify, validate, repair, diffToggle, sortKeys, escape,
- * unescape, save, open, themeToggle, indentChange }.
+ * unescape, save, saveAs, open, themeToggle, indentChange }.
  * @param {HTMLElement} container
  * @param {Record<string, Function>} handlers
  */
@@ -9,12 +11,6 @@ export function createToolbar(container, handlers) {
   container.innerHTML = '';
 
   const groups = [
-    {
-      buttons: [
-        { key: 'open', label: 'Open', title: 'Open a JSON file (Ctrl+O)' },
-        { key: 'save', label: 'Save', title: 'Save the current file (Ctrl+S)' },
-      ],
-    },
     {
       buttons: [
         { key: 'format', label: 'Format', title: 'Format (Ctrl+Shift+F)' },
@@ -34,6 +30,22 @@ export function createToolbar(container, handlers) {
       buttons: [{ key: 'diffToggle', label: 'Diff', title: 'Toggle two-pane compare mode' }],
     },
   ];
+
+  // File menu: Open / Save / Save As live in one dropdown.
+  const fileGroup = document.createElement('div');
+  fileGroup.className = 'toolbar__group';
+  const fileMenu = createDropdownMenu({
+    label: 'File',
+    title: 'Open and save files',
+    items: [
+      { key: 'open', label: 'Open', shortcut: 'Ctrl+O' },
+      { key: 'save', label: 'Save', shortcut: 'Ctrl+S' },
+      { key: 'saveAs', label: 'Save As' },
+    ],
+    onSelect: (key) => handlers[key]?.(),
+  });
+  fileGroup.appendChild(fileMenu.element);
+  container.appendChild(fileGroup);
 
   for (const group of groups) {
     const groupEl = document.createElement('div');

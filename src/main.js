@@ -350,6 +350,15 @@ const handlers = {
     toast.showToast('Tauri unavailable — downloaded a copy instead of saving in place.', 'info');
   },
   open: () => (isTauriRuntime() ? openFileNative() : openFileFallback()),
+  saveAs: async () => {
+    const text = editor.getContent();
+    if (isTauriRuntime()) {
+      await saveAsNative(text);
+      return;
+    }
+    downloadAsFile(text, 'untitled.json');
+    toast.showToast('Tauri unavailable — downloaded a copy instead of saving in place.', 'info');
+  },
 };
 
 /**

@@ -1,0 +1,63 @@
+# Builds installers with tauri-action and attaches them to a DRAFT GitHub release.
+#
+# The pushed tag (vX.Y.Z) must match the version declared in package.json,
+# src-tauri/Cargo.toml and src-tauri/tauri.conf.json. The release name and tag
+# are derived from the version in tauri.conf.json, so bump all three files
+# before tagging. Releases stay drafts: publishing is a manual decision.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark the draft release as a pre-release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: JSON Scout v__VERSION__
+          releaseBody: See the Install section of the README for installation instructions.
+          releaseDraft: true
+          # Tag pushes have no inputs, so they default to a pre-release (the app is in beta).
+          prerelease: ${{ github.event_name != 'workflow_dispatch' || inputs.prerelease }}

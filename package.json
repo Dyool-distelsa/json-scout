@@ -2,7 +2,7 @@
   "name": "json-scout",
   "private": true,
   "version": "0.1.0",
-  "description": "A lightweight Windows desktop JSON toolbox launched from the Explorer context menu.",
+  "description": "A lightweight cross-platform desktop JSON toolbox.",
   "type": "module",
   "scripts": {
     "dev": "vite",

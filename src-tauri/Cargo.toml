@@ -1,7 +1,7 @@
 [package]
 name = "json-scout"
 version = "0.1.0"
-description = "A lightweight Windows desktop JSON toolbox"
+description = "A lightweight cross-platform desktop JSON toolbox"
 authors = ["json-scout"]
 edition = "2021"
 rust-version = "1.77"
@@ -19,9 +19,9 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-winreg = "0.52"
 
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,974 @@
+:root {
+  --color-bg: #1e1e24;
+  --color-bg-alt: #26262e;
+  --color-bg-elevated: #2d2d38;
+  --color-border: #3a3a46;
+  --color-text: #e4e4ec;
+  --color-text-dim: #9a9aac;
+  --color-accent: #6c8cff;
+  --color-accent-hover: #8aa2ff;
+  --color-success: #4caf6d;
+  --color-error: #e05a5a;
+  --color-warning: #d9a441;
+  --font-mono: 'Cascadia Code', 'Consolas', 'SFMono-Regular', Menlo, Monaco, monospace;
+  --font-ui: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --toolbar-height: 44px;
+  --statusbar-height: 26px;
+  --sidebar-width: 220px;
+  --right-panel-width: 320px;
+
+  /* Motion system (T6): the one shared scale every transition/animation in
+     this file draws from, so tuning feel or disabling motion never means
+     hunting down hard-coded durations component by component. */
+  --motion-duration-fast: 120ms;
+  --motion-duration-base: 200ms;
+  --motion-duration-slow: 320ms;
+  /* A toast should visibly dissolve rather than be snapped away by the
+     stack closing, so its exit fade is deliberately longer than the
+     shared interaction durations above. */
+  --motion-duration-exit: 420ms;
+  --motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --motion-ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+
+  --focus-ring-color: #8aa2ff;
+  --shadow-elevated: 0 20px 44px rgba(0, 0, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.3);
+
+  /* Toast weight (T2): a stronger border and a heavier, more spread-out
+     shadow than the general --shadow-elevated, so the toast reads as a
+     solid, unmistakably foreground surface rather than a thin overlay. */
+  --color-border-strong: #565667;
+  --shadow-toast: 0 24px 56px rgba(0, 0, 0, 0.5), 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme='light'] {
+  --color-bg: #ffffff;
+  --color-bg-alt: #f4f5f7;
+  --color-bg-elevated: #ffffff;
+  --color-border: #dcdfe4;
+  --color-text: #1b1c22;
+  --color-text-dim: #666a75;
+  --color-accent: #3457d5;
+  --color-accent-hover: #2745b6;
+  --color-success: #2f8f52;
+  --color-error: #c62f2f;
+  --color-warning: #b1780f;
+
+  --focus-ring-color: #2745b6;
+  --shadow-elevated: 0 16px 36px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.12);
+
+  --color-border-strong: #b7bcc6;
+  --shadow-toast: 0 20px 48px rgba(15, 23, 42, 0.24), 0 8px 18px rgba(15, 23, 42, 0.16);
+}
+
+/* Reduced motion (T6): the single, global rule that disables/neutralizes
+   every transition and animation in this file at once. No component below
+   re-implements its own prefers-reduced-motion block — this is the only
+   place that guarantee lives. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Toolbar */
+.toolbar {
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--color-bg-alt);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+}
+
+.toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-right: 1px solid var(--color-border);
+}
+
+.toolbar__group:last-child {
+  border-right: none;
+}
+
+.toolbar button.tool-btn {
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.toolbar button.tool-btn:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+}
+
+.toolbar button.tool-btn:active {
+  transform: scale(0.96);
+  background: var(--color-bg-elevated);
+}
+
+.toolbar button.tool-btn:focus {
+  outline: none;
+}
+
+.toolbar button.tool-btn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.toolbar select,
+.toolbar input[type='text'] {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 5px 6px;
+  font-size: 12px;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.toolbar select:hover {
+  border-color: var(--color-accent);
+}
+
+.toolbar select:focus {
+  outline: none;
+}
+
+.toolbar select:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-color: var(--color-accent);
+}
+
+.toolbar__spacer {
+  flex: 1;
+}
+
+/* Toast notifications (non-blocking, stacked, auto-dismissing).
+   Anchored TOP-RIGHT (T1): the container's own top edge is pinned, so it
+   grows downward as toasts stack. flex-direction is plain `column` (not
+   `column-reverse`) on purpose: the first (oldest still-visible) toast
+   stays closest to the pinned top edge and does not move when a new one
+   arrives, while each new toast is appended into the newly available
+   space below — the same "anchor stays put, stack grows away from it"
+   behavior the previous bottom-right/column-reverse layout had, mirrored
+   for the new anchor. */
+.toast-container {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(400px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 22px 20px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-left: 5px solid var(--color-accent);
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  box-shadow: var(--shadow-toast);
+  pointer-events: auto;
+  opacity: 0;
+  /* Entrance slides DOWN into place from above the anchor (T1) — the
+     mirror image of the old bottom-anchored toast, which rose up from
+     below. Leaving still retreats upward (unchanged): see .toast--leaving. */
+  transform: translateY(-18px) scale(0.94);
+  transition: opacity var(--motion-duration-base) var(--motion-ease-decelerate),
+    transform var(--motion-duration-base) var(--motion-ease-decelerate),
+    height var(--motion-duration-base) var(--motion-ease-standard),
+    padding-top var(--motion-duration-base) var(--motion-ease-standard),
+    padding-bottom var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.toast--visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.toast--leaving {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.96);
+  /* Sequence the exit: fade and drift out over --motion-duration-exit
+     FIRST, and only then collapse the box (height/padding) so the stack
+     closes the gap afterwards. Running both at once made the toast shrink
+     away before the fade was perceptible. */
+  transition: opacity var(--motion-duration-exit) var(--motion-ease-standard),
+    transform var(--motion-duration-exit) var(--motion-ease-standard),
+    height var(--motion-duration-base) var(--motion-ease-standard) var(--motion-duration-exit),
+    padding-top var(--motion-duration-base) var(--motion-ease-standard) var(--motion-duration-exit),
+    padding-bottom var(--motion-duration-base) var(--motion-ease-standard) var(--motion-duration-exit);
+}
+
+.toast--success {
+  border-left-color: var(--color-success);
+}
+
+.toast--error {
+  border-left-color: var(--color-error);
+}
+
+.toast--info {
+  border-left-color: var(--color-accent);
+}
+
+.toast__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toast--success .toast__icon {
+  color: var(--color-success);
+}
+
+.toast--error .toast__icon {
+  color: var(--color-error);
+}
+
+.toast--info .toast__icon {
+  color: var(--color-accent);
+}
+
+.toast__message {
+  flex: 1;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.toast__close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.toast__close:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.toast__close:focus {
+  outline: none;
+}
+
+.toast__close:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* Remaining-time indicator (T1): a full-width bar under the toast that
+   shrinks from 100% to 0% over exactly the toast's own auto-dismiss
+   duration, set by the JS layer as the `--toast-duration` custom
+   property on each toast element. */
+.toast__progress-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.toast__progress-bar {
+  height: 100%;
+  width: 100%;
+  transform-origin: left;
+  background: var(--color-accent);
+  animation: toast-progress-shrink var(--toast-duration, 5s) linear forwards;
+}
+
+.toast--success .toast__progress-bar {
+  background: var(--color-success);
+}
+
+.toast--error .toast__progress-bar {
+  background: var(--color-error);
+}
+
+.toast--info .toast__progress-bar {
+  background: var(--color-accent);
+}
+
+@keyframes toast-progress-shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* Workspace layout */
+.workspace {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: 140px;
+  max-width: 400px;
+  background: var(--color-bg-alt);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar.collapsed {
+  width: 0;
+  min-width: 0;
+  border-right: none;
+}
+
+.sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sidebar__list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sidebar__item {
+  padding: 6px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  border-left: 2px solid transparent;
+}
+
+.sidebar__item:hover {
+  background: var(--color-bg-elevated);
+}
+
+.sidebar__item.active {
+  border-left-color: var(--color-accent);
+  background: var(--color-bg-elevated);
+}
+
+.sidebar__item-meta {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-dim);
+}
+
+.editor-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.editor-pane[data-mode='diff'] .editor {
+  border-right: 1px solid var(--color-border);
+}
+
+.editor {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.editor-pane__diff-container {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.editor-pane__diff-container[hidden] {
+  display: none;
+}
+
+.cm-editor {
+  height: 100%;
+  font-family: var(--font-mono);
+}
+
+.cm-scroller {
+  overflow: auto;
+}
+
+.right-panel {
+  width: var(--right-panel-width);
+  min-width: 220px;
+  max-width: 480px;
+  background: var(--color-bg-alt);
+  border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.right-panel.collapsed {
+  width: 0;
+  min-width: 0;
+  border-left: none;
+}
+
+.right-panel__header {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  color: var(--color-text-dim);
+  padding: 8px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tab.active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.tab:focus {
+  outline: none;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.tab-panels {
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+
+.tab-panel {
+  display: none;
+}
+
+/* Tab switch transition (T4): re-triggers on every display:none -> block
+   flip, since the browser treats that as a fresh mount for animation
+   purposes — no JS timing needed. */
+.tab-panel.active {
+  display: block;
+  animation: tab-panel-in var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+@keyframes tab-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-dim);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.icon-btn:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.icon-btn:focus {
+  outline: none;
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* Status bar */
+.statusbar {
+  height: var(--statusbar-height);
+  min-height: var(--statusbar-height);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  background: var(--color-bg-alt);
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+
+.statusbar__filename {
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+/* Filename change feedback (T5): a quick fade + settle so a newly opened
+   or saved-as file registers as a change, not just a silent text swap. */
+.statusbar__filename--flip {
+  animation: statusbar-filename-flip var(--motion-duration-slow) var(--motion-ease-decelerate);
+}
+
+@keyframes statusbar-filename-flip {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.statusbar__indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statusbar__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.statusbar__dot.invalid {
+  background: var(--color-error);
+}
+
+/* Validity flip feedback (T5): a pulse when valid/invalid actually
+   changes (not on every debounced re-check that keeps the same result). */
+.statusbar__dot--flip {
+  animation: statusbar-dot-flip var(--motion-duration-slow) var(--motion-ease-standard);
+}
+
+@keyframes statusbar-dot-flip {
+  0% {
+    transform: scale(2.2);
+    opacity: 0.35;
+  }
+  60% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Tree view */
+.tree-node {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tree-node__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.tree-node__row:hover {
+  background: var(--color-bg-elevated);
+}
+
+.tree-node__toggle {
+  width: 12px;
+  display: inline-block;
+  color: var(--color-text-dim);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Chevron rotation (T4): a single glyph that rotates instead of swapping
+   between two different characters. */
+.tree-node__toggle--expanded {
+  transform: rotate(90deg);
+}
+
+.tree-node__key {
+  color: var(--color-accent);
+}
+
+.tree-node__type {
+  color: var(--color-text-dim);
+  font-size: 10px;
+}
+
+.tree-node__value {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Expand/collapse (T4): a grid-rows trick animates to the children's
+   natural content height without any JS measurement, which matters here
+   because children are only ever built lazily on first expand (see
+   rightPanel.js) — this must not force eager rendering to know a height. */
+.tree-node__children-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.tree-node__children-grid--expanded {
+  grid-template-rows: 1fr;
+}
+
+.tree-node__children-grid > .tree-node__children {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.tree-node__children {
+  margin-left: 14px;
+  border-left: 1px dashed var(--color-border);
+  padding-left: 8px;
+}
+
+/* Diff view */
+.diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.diff-entry {
+  padding: 6px 8px;
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+}
+
+.diff-entry--added {
+  background: rgba(76, 175, 109, 0.12);
+  border-left-color: var(--color-success);
+}
+
+.diff-entry--removed {
+  background: rgba(224, 90, 90, 0.12);
+  border-left-color: var(--color-error);
+}
+
+.diff-entry--modified {
+  background: rgba(217, 164, 65, 0.12);
+  border-left-color: var(--color-warning);
+}
+
+.diff-entry--moved {
+  background: rgba(108, 140, 255, 0.12);
+  border-left-color: var(--color-accent);
+}
+
+.diff-entry__path {
+  color: var(--color-text-dim);
+  display: block;
+  margin-bottom: 2px;
+}
+
+/* Query panel */
+.query-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.query-results {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Stats panel */
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.stats-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.stats-tile__label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+}
+
+.stats-tile__value {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stats panel: type histogram */
+.stats-histogram__title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  margin-bottom: 6px;
+}
+
+.stats-histogram__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stats-histogram__row {
+  display: grid;
+  grid-template-columns: 56px 1fr 28px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding: 2px 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Zero-count types are still listed (for a stable, scannable row order) but
+   pulled back visually so they read as background rather than noise. */
+.stats-histogram__row--zero {
+  opacity: 0.4;
+}
+
+.stats-histogram__label {
+  color: var(--color-text);
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-histogram__bar-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-bg-alt);
+  overflow: hidden;
+}
+
+.stats-histogram__bar {
+  height: 100%;
+  width: var(--bar-percent, 0%);
+  background: var(--color-accent);
+  border-radius: 3px;
+  transition: width var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+.stats-histogram__row--zero .stats-histogram__bar {
+  background: var(--color-text-dim);
+}
+
+.stats-histogram__count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+
+/* Drag and drop overlay */
+.dropzone-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(108, 140, 255, 0.15);
+  border: 3px dashed var(--color-accent);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--color-accent);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.dropzone-overlay.active {
+  display: flex;
+}
+
+/* Settings panel */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.settings-row__label {
+  font-size: 12px;
+}
+
+.settings-row__desc {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  margin-top: 2px;
+}
+
+button.primary {
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+button.primary:hover {
+  background: var(--color-accent-hover);
+}
+
+button.danger {
+  background: var(--color-error);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* Responsive: stay sane on small windows */
+@media (max-width: 900px) {
+  :root {
+    --sidebar-width: 160px;
+    --right-panel-width: 260px;
+  }
+}

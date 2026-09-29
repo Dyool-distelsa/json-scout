@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JSON Scout</title>
+    <link rel="stylesheet" href="./styles/main.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="toolbar" class="toolbar" aria-label="Toolbar"></header>
+
+      <main class="workspace">
+        <aside id="sidebar" class="sidebar">
+          <div class="sidebar__header">
+            <span>Files</span>
+            <button id="sidebar-collapse" class="icon-btn" title="Collapse sidebar">&laquo;</button>
+          </div>
+          <div id="sidebar-list" class="sidebar__list"></div>
+        </aside>
+
+        <section class="editor-pane">
+          <div id="editor" class="editor"></div>
+          <div class="editor-pane__diff-container" id="diff-secondary-container" hidden>
+            <div id="editor-secondary" class="editor"></div>
+          </div>
+        </section>
+
+        <aside id="right-panel" class="right-panel">
+          <div class="right-panel__header">
+            <button id="right-panel-collapse" class="icon-btn" title="Collapse panel">&raquo;</button>
+          </div>
+          <nav class="tabs" id="right-panel-tabs">
+            <button class="tab active" data-tab="tree">Tree</button>
+            <button class="tab" data-tab="query">Query</button>
+            <button class="tab" data-tab="diff">Diff</button>
+            <button class="tab" data-tab="convert">Convert</button>
+            <button class="tab" data-tab="stats">Stats</button>
+            <button class="tab" data-tab="settings">Settings</button>
+          </nav>
+          <div class="tab-panels" id="right-panel-panels">
+            <div class="tab-panel active" data-panel="tree" id="panel-tree"></div>
+            <div class="tab-panel" data-panel="query" id="panel-query"></div>
+            <div class="tab-panel" data-panel="diff" id="panel-diff"></div>
+            <div class="tab-panel" data-panel="convert" id="panel-convert"></div>
+            <div class="tab-panel" data-panel="stats" id="panel-stats"></div>
+            <div class="tab-panel" data-panel="settings" id="panel-settings"></div>
+          </div>
+        </aside>
+      </main>
+
+      <footer id="statusbar" class="statusbar"></footer>
+    </div>
+    <div id="toast-container" class="toast-container" aria-label="Notifications"></div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

@@ -14,9 +14,9 @@ Download the installer for your OS from the [Releases page](https://github.com/D
 **Linux**
 
 ```bash
-sudo apt install ./json-scout_*.deb     # Debian / Ubuntu
-sudo dnf install ./json-scout-*.rpm     # Fedora / RHEL
-chmod +x json-scout_*.AppImage && ./json-scout_*.AppImage   # AppImage, no install
+sudo apt install ./JSON*Scout*.deb     # Debian / Ubuntu
+sudo dnf install ./JSON*Scout*.rpm     # Fedora / RHEL
+chmod +x JSON*Scout*.AppImage && ./JSON*Scout*.AppImage   # AppImage, no install
 ```
 
 On Linux the installed desktop entry registers JSON Scout as a JSON handler, so **Open with** works from your file manager. The Explorer context-menu integration below is Windows-only.

@@ -23,8 +23,8 @@ Out: macOS, code signing, auto-update, pushing a release tag (the user decides w
 ## Tasks
 - [x] T1 Backend portability: `winreg` only under `cfg(windows)`, neutral Cargo description, bundle targets valid on both OSes. Check: `cargo test` still green.
 - [x] T2 UI gating (RED first): pure `supportsContextMenu` helper in `src/ui/runtime.js` with tests; Settings panel shows a "Windows only" state elsewhere. Check: `npm test`.
-- [ ] T3 CI workflow `.github/workflows/ci.yml`: JS tests + `cargo test` on ubuntu and windows. Check: first run green on GitHub. (workflow written, verification pending first GitHub run)
-- [ ] T4 Release workflow `.github/workflows/release.yml`: tag `v*` or manual dispatch, matrix windows + ubuntu, `tauri-apps/tauri-action`, draft release. Check: manual dispatch produces a draft with installers. (workflow written, verification pending first GitHub run)
+- [x] T3 CI workflow `.github/workflows/ci.yml`: JS tests + `cargo test` on ubuntu and windows. Check: first run green on GitHub. (CI run 36608315048 green on ubuntu-22.04 and windows-latest)
+- [x] T4 Release workflow `.github/workflows/release.yml`: tag `v*` or manual dispatch, matrix windows + ubuntu, `tauri-apps/tauri-action`, draft release. Check: manual dispatch produces a draft with installers. (dispatch run 36608891413 produced draft prerelease v0.1.0 with .rpm, .AppImage, .deb, setup .exe, .msi)
 - [x] T5 README: Linux prerequisites, install from Releases, release process, platform notes, license line. Check: readback.
 
 ## Acceptance criteria
@@ -39,9 +39,10 @@ Out: macOS, code signing, auto-update, pushing a release tag (the user decides w
 ## Progress / evidence
 - T1 (9c3cc5f): `winreg` moved under `[target.'cfg(windows)'.dependencies]`, empty cfg table removed, neutral descriptions, bundle `targets: "all"`. `cd src-tauri && cargo test`: 31 passed, 0 failed.
 - T2 (a93d250): RED observed first (`npm test`: 4 failed, 256 passed). After implementing `supportsContextMenu` and the Settings gating: 17 files, 260 passed. `npm run build` exit 0.
-- T3 (5b0349e): `.github/workflows/ci.yml` written; not run locally. Verification pending first GitHub run.
-- T4 (6e77bb8): `.github/workflows/release.yml` written (draft releases, prerelease input default true); not run locally. Verification pending first GitHub run.
+- T3 (5b0349e): `.github/workflows/ci.yml`; run 36608315048 succeeded on ubuntu-22.04 and windows-latest (JS tests, frontend build, Rust tests), which also proves `winreg` gating compiles on Linux.
+- T4 (6e77bb8): `.github/workflows/release.yml`; dispatch run 36608891413 succeeded on both OSes and produced draft prerelease v0.1.0 with `.rpm`, `.AppImage`, `.deb`, setup `.exe` and `.msi`.
+- Finding: GitHub renames release assets with dots (`JSON.Scout_0.1.0_amd64.deb`), so README install commands use `JSON*Scout*` globs.
 - T5 (README commit): Install, Prerequisites (Linux deps), Building, Releasing, Project layout, Known limitations and License updated; readback done.
 
 ## Next step
-Push, watch CI, dispatch release dry run.
+Done. Draft v0.1.0 is a dry-run artifact: delete it or bump versions and tag a real release. Release assets are named "JSON.Scout_*" (GitHub replaces spaces with dots), so README globs use JSON*Scout*.

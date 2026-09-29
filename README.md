@@ -110,7 +110,7 @@ CI (`.github/workflows/ci.yml`) runs the JS and Rust tests on Ubuntu and Windows
 3. The workflow builds Windows and Linux installers and attaches them to a **draft** release.
 4. Review the draft on GitHub, then publish it.
 
-The workflow can also be run manually from the Actions tab (`workflow_dispatch`, with a `prerelease` input) as a dry run: it still only creates a draft release.
+The workflow can also be run manually from the Actions tab (`workflow_dispatch`, with a `tag` and `prerelease` inputs) as a dry run, passing a throwaway `tag` (for example `v0.0.0-test`): it only creates a draft release, which you can delete afterwards. A tag that already has a published release is refused, so published assets are never overwritten.
 
 ## Project layout
 

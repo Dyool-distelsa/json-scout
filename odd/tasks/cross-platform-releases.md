@@ -45,7 +45,7 @@ Out: macOS, code signing, auto-update, pushing a release tag (the user decides w
 - T5 (README commit): Install, Prerequisites (Linux deps), Building, Releasing, Project layout, Known limitations and License updated; readback done.
 
 ## Next step
-Done. Draft v0.1.0 is a dry-run artifact: delete it or bump versions and tag a real release. Release assets are named "JSON.Scout_*" (GitHub replaces spaces with dots), so README globs use JSON*Scout*.
+Done. v0.1.0 is published as a pre-release. For the next release, bump the version in package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json, tag vX.Y.Z and publish the resulting draft. Release assets are named "JSON.Scout_*" (GitHub replaces spaces with dots), so README globs use JSON*Scout*.
 
 ## Follow-up: release race fix
 - Problem: matrix jobs each created their own draft on the v0.1.0 tag push (one draft per OS); assets were merged by hand.

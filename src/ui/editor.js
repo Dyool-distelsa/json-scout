@@ -22,6 +22,7 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { linter, lintGutter } from '@codemirror/lint';
 import { validateJson } from '../tools/validate.js';
 import { resolveLineColumnOffset } from './editorPosition.js';
+import { shouldProcessPaste } from './pasteRules.js';
 
 const themeCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
@@ -79,10 +80,14 @@ function jsonLintSource(view) {
 /**
  * Create a CodeMirror 6 JSON editor.
  * @param {HTMLElement} parent
- * @param {{ doc?: string, theme?: 'dark'|'light', readOnly?: boolean, onChange?: () => void }} [options]
+ * @param {{ doc?: string, theme?: 'dark'|'light', readOnly?: boolean, onChange?: () => void,
+ *   onPaste?: (text: string) => string | null }} [options]
+ *   `onPaste` is offered pasted plain text only when the paste would replace
+ *   the whole document; return replacement text to use it instead of the raw
+ *   paste, or null to let the default paste happen.
  */
 export function createEditor(parent, options = {}) {
-  const { doc = '', theme = 'dark', readOnly = false, onChange } = options;
+  const { doc = '', theme = 'dark', readOnly = false, onChange, onPaste } = options;
 
   const updateListener = EditorView.updateListener.of((update) => {
     // Deliberately does NOT pass the document text here: doing so would
@@ -94,6 +99,29 @@ export function createEditor(parent, options = {}) {
     if (update.docChanged && typeof onChange === 'function') {
       onChange();
     }
+  });
+
+  const pasteHandler = EditorView.domEventHandlers({
+    paste(event, view) {
+      if (typeof onPaste !== 'function' || view.state.readOnly) return false;
+      const { ranges, main } = view.state.selection;
+      if (ranges.length !== 1 || !shouldProcessPaste(view.state.doc.length, main.from, main.to)) {
+        return false;
+      }
+      const pasted = event.clipboardData?.getData('text/plain') ?? '';
+      const replacement = onPaste(pasted);
+      if (replacement === null || replacement === undefined) return false;
+      event.preventDefault();
+      // A normal transaction: the update listener above fires `onChange`
+      // exactly as it does for typing, so lint/tree refresh is unchanged.
+      view.dispatch({
+        changes: { from: main.from, to: main.to, insert: replacement },
+        selection: { anchor: main.from + replacement.length },
+        scrollIntoView: true,
+        userEvent: 'input.paste',
+      });
+      return true;
+    },
   });
 
   const state = EditorState.create({
@@ -117,6 +145,7 @@ export function createEditor(parent, options = {}) {
       themeCompartment.of(theme === 'light' ? lightPalette : darkPalette),
       readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
       updateListener,
+      pasteHandler,
       EditorView.lineWrapping,
     ],
   });

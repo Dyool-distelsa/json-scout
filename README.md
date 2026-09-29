@@ -1,6 +1,25 @@
 # JSON Scout
 
-A lightweight Windows desktop JSON toolbox, built to replace "paste your JSON into a website" with a fast native app you launch straight from Explorer's right-click menu.
+A lightweight cross-platform (Windows and Linux) desktop JSON toolbox, built to replace "paste your JSON into a website" with a fast native app. On Windows it also integrates with the Explorer right-click menu.
+
+## Install
+
+Download the installer for your OS from the [Releases page](https://github.com/Dyool-distelsa/json-scout/releases).
+
+**Windows**
+
+- Run the NSIS `.exe` (per-user install) or the `.msi`.
+- The installers are unsigned. Windows SmartScreen may warn ("Windows protected your PC"): click **More info** then **Run anyway**. Smart App Control, if enabled, can block unsigned apps outright; it can only be turned off in Windows Security settings (see Known limitations).
+
+**Linux**
+
+```bash
+sudo apt install ./json-scout_*.deb     # Debian / Ubuntu
+sudo dnf install ./json-scout-*.rpm     # Fedora / RHEL
+chmod +x json-scout_*.AppImage && ./json-scout_*.AppImage   # AppImage, no install
+```
+
+On Linux the installed desktop entry registers JSON Scout as a JSON handler, so **Open with** works from your file manager. The Explorer context-menu integration below is Windows-only.
 
 ## Features
 
@@ -21,7 +40,7 @@ A lightweight Windows desktop JSON toolbox, built to replace "paste your JSON in
 
 ## Windows Explorer integration
 
-This is the actual point of the app:
+Windows only. The main entry points are:
 
 - **Open with JSON Scout** on a `.json` file loads it on startup (CLI argv).
 - **Right-click a `.json` file → "Open in JSON Scout"**.
@@ -43,8 +62,13 @@ A second click of any "Open in JSON Scout" / "JSON Scout here" entry reuses the 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+ and npm
-- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain) + the MSVC build tools, required by Tauri on Windows
-- [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (already present on modern Windows 11 installs)
+- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
+- **Windows:** the MSVC build tools, required by Tauri, and [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (already present on modern Windows 11 installs)
+- **Linux:** the Tauri v2 system libraries (Debian/Ubuntu package names):
+
+  ```bash
+  sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+  ```
 
 ## Development
 
@@ -72,10 +96,21 @@ cargo test
 
 ```bash
 npm run build        # frontend only (Vite production build -> dist/)
-npm run tauri build  # full desktop app: NSIS + MSI installers
+npm run tauri build  # full desktop app with the installers for the current OS
 ```
 
-The built installers land in `src-tauri/target/release/bundle/nsis/` and `src-tauri/target/release/bundle/msi/`.
+Installer formats per OS: NSIS and MSI on Windows; deb, rpm and AppImage on Linux. They land in `src-tauri/target/release/bundle/<format>/` (`nsis/`, `msi/`, `deb/`, `rpm/`, `appimage/`).
+
+## Releasing
+
+CI (`.github/workflows/ci.yml`) runs the JS and Rust tests on Ubuntu and Windows for every push to `main` and every pull request. Releases are built by `.github/workflows/release.yml`:
+
+1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, and commit.
+2. Tag and push: `git tag vX.Y.Z` then `git push origin vX.Y.Z`. The tag must match the version.
+3. The workflow builds Windows and Linux installers and attaches them to a **draft** release.
+4. Review the draft on GitHub, then publish it.
+
+The workflow can also be run manually from the Actions tab (`workflow_dispatch`, with a `prerelease` input) as a dry run: it still only creates a draft release.
 
 ## Project layout
 
@@ -98,6 +133,8 @@ src-tauri/              Rust backend (Tauri v2)
   icons/                  App icon set (generated via `npx tauri icon`)
   capabilities/           Tauri v2 permission capabilities
 
+.github/workflows/      ci.yml (tests on Linux + Windows), release.yml (draft releases on tags)
+
 odd/tasks/              Per-feature task documents (scope, tasks, verification evidence)
 
 scripts/                 Standalone PowerShell fallback for the context-menu install
@@ -106,5 +143,10 @@ scripts/                 Standalone PowerShell fallback for the context-menu ins
 ## Known limitations
 
 - Very large integers (beyond `Number.MAX_SAFE_INTEGER`) lose precision on format/minify/validate, the same way `JSON.parse`/`JSON.stringify` do natively. This is documented and tested rather than silently "fixed" with a lossless-number rewrite.
-- The release binary is unsigned. Windows Smart App Control may block it ("An Application Control policy has blocked this file"); turn Smart App Control off or sign the executable to run local builds.
+- The Windows binaries and installers are unsigned. Windows Smart App Control may block them ("An Application Control policy has blocked this file"); turn Smart App Control off or sign the executable to run them. SmartScreen only warns and can be bypassed with **Run anyway**.
+- The Explorer context-menu integration is Windows-only. Linux relies on the desktop entry installed by the deb/rpm/AppImage packages.
 - Browsers without Tauri get a degraded fallback (file input / download) instead of native dialogs; the desktop app is the supported target.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

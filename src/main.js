@@ -19,6 +19,7 @@ import { utf8ByteLength, formatBytes, computeMinifySaving, computeFormatGrowth }
 import { mountToastContainer } from './ui/toast.js';
 import { isTauriRuntime, deriveDisplayFileName } from './ui/runtime.js';
 import { debounce } from './ui/debounce.js';
+import { isCopyable, copyText } from './ui/clipboard.js';
 import { describePasteSuccess, PASTE_FAILURE_MESSAGE } from './ui/pasteRules.js';
 
 const DERIVED_REFRESH_DEBOUNCE_MS = 250;
@@ -451,6 +452,19 @@ async function loadDirectory(dirPath) {
     toast.showToast(`Could not scan folder ${dirPath}: ${err}`, 'error');
   }
 }
+
+document.getElementById('copy-btn').addEventListener('click', async () => {
+  const text = editor.getContent();
+  if (!isCopyable(text)) {
+    toast.showToast('Nothing to copy', 'info');
+    return;
+  }
+  if (await copyText(text)) {
+    toast.showToast('Copied to clipboard', 'success');
+  } else {
+    toast.showToast('Could not copy to clipboard.', 'error');
+  }
+});
 
 createToolbar(document.getElementById('toolbar'), handlers);
 

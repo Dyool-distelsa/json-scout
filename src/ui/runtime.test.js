@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { isTauriRuntime, deriveDisplayFileName } from './runtime.js';
+import { isTauriRuntime, deriveDisplayFileName, supportsContextMenu } from './runtime.js';
 
 describe('deriveDisplayFileName', () => {
   it('returns Untitled for a null path', () => {
@@ -55,5 +55,30 @@ describe('isTauriRuntime', () => {
   it('returns true when window has __TAURI_INTERNALS__', () => {
     globalThis.window = { __TAURI_INTERNALS__: {} };
     expect(isTauriRuntime()).toBe(true);
+  });
+});
+
+describe('supportsContextMenu', () => {
+  it('is true for a Windows user agent', () => {
+    expect(
+      supportsContextMenu('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/120.0'),
+    ).toBe(true);
+  });
+
+  it('is false for a Linux user agent', () => {
+    expect(
+      supportsContextMenu('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko)'),
+    ).toBe(false);
+  });
+
+  it('is false for a macOS user agent', () => {
+    expect(supportsContextMenu('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')).toBe(false);
+  });
+
+  it('is false for an empty or non-string user agent', () => {
+    expect(supportsContextMenu('')).toBe(false);
+    expect(supportsContextMenu(undefined)).toBe(false);
+    expect(supportsContextMenu(null)).toBe(false);
+    expect(supportsContextMenu(42)).toBe(false);
   });
 });

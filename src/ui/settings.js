@@ -1,8 +1,12 @@
+import { supportsContextMenu } from './runtime.js';
+
 /**
  * Render the Settings panel: a toggle to install/remove the Windows
  * Explorer context-menu entries (backed by Rust `winreg` commands under
- * HKCU). Falls back to a disabled explanation when not running inside
- * the Tauri shell (e.g. a plain browser preview).
+ * HKCU). On other platforms the row is rendered disabled as "Windows
+ * only" and no Tauri command is invoked. Falls back to a disabled
+ * explanation when not running inside the Tauri shell (e.g. a plain
+ * browser preview).
  * @param {HTMLElement} container
  * @param {(message: string, kind?: 'error'|'info') => void} onNotify
  */
@@ -22,6 +26,12 @@ export function createSettingsPanel(container, onNotify) {
     'Adds "Open in JSON Scout" / "JSON Scout here" entries under HKCU (no admin rights required).';
   labelWrap.appendChild(label);
   labelWrap.appendChild(desc);
+
+  const windowsSupported = supportsContextMenu(navigator.userAgent);
+  if (!windowsSupported) {
+    desc.textContent =
+      'The Explorer context-menu integration is only available on Windows. On Linux, the .deb, .rpm and AppImage installs register JSON Scout as a JSON handler, so "Open with" works in the file manager.';
+  }
 
   const button = document.createElement('button');
   button.className = 'primary';
@@ -63,7 +73,12 @@ export function createSettingsPanel(container, onNotify) {
     }
   });
 
-  refresh();
+  if (windowsSupported) {
+    refresh();
+  } else {
+    button.textContent = 'Windows only';
+    button.disabled = true;
+  }
 
   return { refresh };
 }

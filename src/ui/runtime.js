@@ -25,3 +25,13 @@ export function deriveDisplayFileName(path) {
   if (!path) return 'Untitled';
   return path.split(/[\\/]/).pop();
 }
+
+/**
+ * True when the given user agent belongs to Windows, the only platform
+ * where the Explorer context-menu integration exists.
+ * @param {unknown} userAgent
+ * @returns {boolean}
+ */
+export function supportsContextMenu(userAgent) {
+  return typeof userAgent === 'string' && userAgent.includes('Windows');
+}

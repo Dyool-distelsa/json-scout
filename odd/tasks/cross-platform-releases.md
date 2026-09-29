@@ -46,3 +46,8 @@ Out: macOS, code signing, auto-update, pushing a release tag (the user decides w
 
 ## Next step
 Done. Draft v0.1.0 is a dry-run artifact: delete it or bump versions and tag a real release. Release assets are named "JSON.Scout_*" (GitHub replaces spaces with dots), so README globs use JSON*Scout*.
+
+## Follow-up: release race fix
+- Problem: matrix jobs each created their own draft on the v0.1.0 tag push (one draft per OS); assets were merged by hand.
+- Fix (1d56710): `create-release` job creates the draft once and exposes its id; `build` jobs upload via tauri-action `releaseId`. Manual dispatch now requires a `tag` input; an already-published tag is refused.
+- Evidence: dispatch run 36611640299 (tag v0.0.0-test) produced one draft with 5 installers; dispatch run 36611645127 (tag v0.1.0) failed at create-release with "already published"; published v0.1.0 kept its 5 assets. Test draft deleted.

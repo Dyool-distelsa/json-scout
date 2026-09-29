@@ -13,11 +13,13 @@ import { validateJson } from './tools/validate.js';
 import { parseDocument } from './tools/parseDocument.js';
 import { repairJson } from './tools/repair.js';
 import { sortKeysDeep } from './tools/sortKeys.js';
+import { processPastedJson } from './tools/pastePipeline.js';
 import { escapeString, unescapeString } from './tools/escape.js';
 import { utf8ByteLength, formatBytes, computeMinifySaving, computeFormatGrowth } from './tools/jsonUtils.js';
 import { mountToastContainer } from './ui/toast.js';
 import { isTauriRuntime, deriveDisplayFileName } from './ui/runtime.js';
 import { debounce } from './ui/debounce.js';
+import { describePasteSuccess, PASTE_FAILURE_MESSAGE } from './ui/pasteRules.js';
 
 const DERIVED_REFRESH_DEBOUNCE_MS = 250;
 
@@ -39,6 +41,7 @@ const editor = createEditor(document.getElementById('editor'), {
   doc: '',
   theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
   onChange: onEditorChange,
+  onPaste: handlePaste,
 });
 
 let secondaryEditor = null;
@@ -135,6 +138,24 @@ const debouncedRefreshSecondaryPanels = debounce(
   () => refreshDerivedPanels(),
   DERIVED_REFRESH_DEBOUNCE_MS
 );
+
+/**
+ * Called by the editor only for a paste that would replace the whole
+ * document. Returns the processed text (validate, repair, sort, format
+ * with the current indent) or null to keep the default paste, so the
+ * user's pasted text is never lost.
+ * @param {string} text
+ * @returns {string | null}
+ */
+function handlePaste(text) {
+  const result = processPastedJson(text, { indent: state.indent });
+  if (!result.ok) {
+    toast.showToast(PASTE_FAILURE_MESSAGE, 'error');
+    return null;
+  }
+  toast.showToast(describePasteSuccess(result.steps), 'success');
+  return result.text;
+}
 
 function onEditorChange() {
   // Cursor tracking is cheap and users notice lag here immediately, so

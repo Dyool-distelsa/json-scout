@@ -1256,8 +1256,18 @@ button.tool-btn:active {
   padding: 10px var(--space-4);
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
   /* --i (set in JS) staggers the entrance tile by tile. */
+}
+
+/* Entrance motion only plays when the panel goes from empty/error to real
+   stats, never on the per-keystroke refresh, which would flicker. */
+.stats--entering .stats-tile {
   animation: stat-in var(--motion-duration-slow) var(--motion-ease-decelerate) both;
   animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+.stats--entering .stats-histogram__bar {
+  animation: bar-grow var(--motion-duration-slow) var(--motion-ease-decelerate) both;
+  animation-delay: calc(120ms + var(--i, 0) * 40ms);
 }
 
 @keyframes stat-in {
@@ -1345,8 +1355,6 @@ button.tool-btn:active {
   background: var(--color-accent);
   border-radius: var(--radius-full);
   /* Grows from 0 to --bar-percent each time the panel renders. */
-  animation: bar-grow var(--motion-duration-slow) var(--motion-ease-decelerate) both;
-  animation-delay: calc(120ms + var(--i, 0) * 40ms);
 }
 
 @keyframes bar-grow {

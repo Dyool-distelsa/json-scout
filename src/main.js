@@ -8,6 +8,7 @@ import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut } from './ui/shortcuts.js';
+import { flashEditor } from './ui/feedback.js';
 
 import { formatJson } from './tools/format.js';
 import { minifyJson } from './tools/minify.js';
@@ -222,6 +223,11 @@ function setEditorContentAndFlush(text) {
   debouncedComputeDerivedState.flush();
 }
 
+// Success-only confirmation: a brief accent glow on the primary editor.
+function flashPrimaryEditor() {
+  flashEditor(document.getElementById('editor'));
+}
+
 /**
  * Turn a `computeMinifySaving` result into the Minify success toast text.
  * Purely presentational (wording only) — the arithmetic it reads from
@@ -263,6 +269,7 @@ const handlers = {
       const beforeBytes = utf8ByteLength(editor.getContent());
       const formatted = formatJson(editor.getContent(), { indent: state.indent });
       setEditorContentAndFlush(formatted);
+      flashPrimaryEditor();
       const afterBytes = utf8ByteLength(formatted);
       const growth = computeFormatGrowth(beforeBytes, afterBytes);
       toast.showToast(describeFormatGrowth(growth), 'success');
@@ -272,6 +279,7 @@ const handlers = {
       const beforeBytes = utf8ByteLength(editor.getContent());
       const minified = minifyJson(editor.getContent());
       setEditorContentAndFlush(minified);
+      flashPrimaryEditor();
       const afterBytes = utf8ByteLength(minified);
       const saving = computeMinifySaving(beforeBytes, afterBytes);
       toast.showToast(describeMinifySaving(saving), 'success');
@@ -290,6 +298,7 @@ const handlers = {
   repair: () =>
     withToastOnError(() => {
       setEditorContentAndFlush(repairJson(editor.getContent()));
+      flashPrimaryEditor();
     }),
   sortKeys: () =>
     withToastOnError(() => {
@@ -298,14 +307,17 @@ const handlers = {
       setEditorContentAndFlush(
         JSON.stringify(sorted, null, state.indent === 'tab' ? '\t' : state.indent)
       );
+      flashPrimaryEditor();
     }),
   escape: () =>
     withToastOnError(() => {
       setEditorContentAndFlush(escapeString(editor.getContent()));
+      flashPrimaryEditor();
     }),
   unescape: () =>
     withToastOnError(() => {
       setEditorContentAndFlush(unescapeString(editor.getContent()));
+      flashPrimaryEditor();
     }),
   diffToggle: () => {
     state.diffMode = !state.diffMode;

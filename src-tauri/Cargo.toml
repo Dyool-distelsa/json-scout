@@ -1,6 +1,6 @@
 [package]
 name = "json-scout"
-version = "0.2.1"
+version = "0.2.2"
 description = "A lightweight cross-platform desktop JSON toolbox"
 authors = ["json-scout"]
 edition = "2021"

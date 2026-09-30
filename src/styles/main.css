@@ -1,22 +1,65 @@
+/* Design tokens.
+   The palette values below are mirrored in the `palette` object in
+   src/ui/editor.js so CodeMirror matches the chrome: keep them in sync. */
 :root {
-  --color-bg: #1e1e24;
-  --color-bg-alt: #26262e;
-  --color-bg-elevated: #2d2d38;
-  --color-border: #3a3a46;
-  --color-text: #e4e4ec;
-  --color-text-dim: #9a9aac;
-  --color-accent: #6c8cff;
-  --color-accent-hover: #8aa2ff;
-  --color-success: #4caf6d;
-  --color-error: #e05a5a;
-  --color-warning: #d9a441;
-  --font-mono: 'Cascadia Code', 'Consolas', 'SFMono-Regular', Menlo, Monaco, monospace;
-  --font-ui: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* Surfaces: near-black, cool-tinted. */
+  --color-bg: #0f1012;
+  --color-bg-alt: #16171a;
+  --color-bg-elevated: #1c1d21;
+  --color-bg-hover: rgba(255, 255, 255, 0.05);
+  --color-bg-active: rgba(255, 255, 255, 0.09);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.15);
+  --color-text: #e6e7ea;
+  --color-text-dim: #8a8f98;
+  --color-accent: #5e6ad2;
+  --color-accent-hover: #6f7bdf;
+  --color-accent-text: #8f98f0;
+  --color-on-accent: #ffffff;
+  --color-success: #4cb782;
+  --color-error: #eb5757;
+  --color-warning: #e2b340;
+  --color-scrollbar: rgba(255, 255, 255, 0.14);
+  --color-scrollbar-hover: rgba(255, 255, 255, 0.26);
+
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Consolas', 'SFMono-Regular', Menlo, Monaco,
+    monospace;
+  --font-ui: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI Variable Text', 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+
+  /* Layout */
   --toolbar-height: 44px;
   --statusbar-height: 26px;
   --sidebar-width: 220px;
   --right-panel-width: 320px;
   --rail-width: 32px;
+
+  /* Spacing scale */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+
+  /* Radius scale */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 999px;
+
+  /* Type scale */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-xl: 18px;
+
+  /* Z-index layers */
+  --z-overlay: 900;
+  --z-raised: 5;
+  --z-dropdown: 1000;
+  --z-toast: 1100;
 
   /* Motion system (T6): the one shared scale every transition/animation in
      this file draws from, so tuning feel or disabling motion never means
@@ -32,34 +75,36 @@
   --motion-ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
   --motion-ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
 
-  --focus-ring-color: #8aa2ff;
-  --shadow-elevated: 0 20px 44px rgba(0, 0, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.3);
-
-  /* Toast weight (T2): a stronger border and a heavier, more spread-out
-     shadow than the general --shadow-elevated, so the toast reads as a
-     solid, unmistakably foreground surface rather than a thin overlay. */
-  --color-border-strong: #565667;
-  --shadow-toast: 0 24px 56px rgba(0, 0, 0, 0.5), 0 8px 20px rgba(0, 0, 0, 0.35);
+  /* One shared focus ring for every interactive control. */
+  --focus-ring-color: #7f8af0;
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--focus-ring-color);
+  --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-toast: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 :root[data-theme='light'] {
   --color-bg: #ffffff;
-  --color-bg-alt: #f4f5f7;
+  --color-bg-alt: #f7f7f8;
   --color-bg-elevated: #ffffff;
-  --color-border: #dcdfe4;
-  --color-text: #1b1c22;
-  --color-text-dim: #666a75;
-  --color-accent: #3457d5;
-  --color-accent-hover: #2745b6;
-  --color-success: #2f8f52;
-  --color-error: #c62f2f;
-  --color-warning: #b1780f;
+  --color-bg-hover: rgba(15, 16, 20, 0.05);
+  --color-bg-active: rgba(15, 16, 20, 0.09);
+  --color-border: rgba(15, 16, 20, 0.09);
+  --color-border-strong: rgba(15, 16, 20, 0.17);
+  --color-text: #1c1d21;
+  --color-text-dim: #6b6f76;
+  --color-accent: #5e6ad2;
+  --color-accent-hover: #4f5bc4;
+  --color-accent-text: #4a55b8;
+  --color-on-accent: #ffffff;
+  --color-success: #2a9461;
+  --color-error: #d13d3d;
+  --color-warning: #b7791f;
+  --color-scrollbar: rgba(15, 16, 20, 0.16);
+  --color-scrollbar-hover: rgba(15, 16, 20, 0.3);
 
-  --focus-ring-color: #2745b6;
-  --shadow-elevated: 0 16px 36px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.12);
-
-  --color-border-strong: #b7bcc6;
-  --shadow-toast: 0 20px 48px rgba(15, 23, 42, 0.24), 0 8px 18px rgba(15, 23, 42, 0.16);
+  --focus-ring-color: #4a55b8;
+  --shadow-elevated: 0 12px 32px rgba(15, 16, 20, 0.14), 0 0 0 1px rgba(15, 16, 20, 0.05);
+  --shadow-toast: 0 16px 40px rgba(15, 16, 20, 0.18), 0 0 0 1px rgba(15, 16, 20, 0.05);
 }
 
 /* Reduced motion (T6): the single, global rule that disables/neutralizes
@@ -91,8 +136,79 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--text-base);
+  -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+/* Form controls do not inherit the UI font by default. */
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-ui);
+}
+
+/* Refined, unobtrusive scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+  border: 3px solid transparent;
+  border-radius: var(--radius-full);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-hover);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Shared keyboard focus ring: one recipe for every interactive control. The
+   default UA outline is suppressed only for mouse focus; :focus-visible
+   always draws the ring. */
+:is(
+    button,
+    select,
+    input,
+    .tab,
+    .sidebar__item,
+    .tree-node__row,
+    .dropdown-menu__item,
+    .icon-btn
+  ):focus {
+  outline: none;
+}
+
+:is(
+    button,
+    select,
+    input,
+    .tab,
+    .sidebar__item,
+    .tree-node__row,
+    .dropdown-menu__item,
+    .icon-btn
+  ):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 #app {
@@ -108,59 +224,84 @@ body {
   min-height: var(--toolbar-height);
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 8px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   background: var(--color-bg-alt);
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
 }
 
+/* Groups are separated by a hairline divider drawn before every group but
+   the first, so there is no dangling divider at either end. */
 .toolbar__group {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 6px;
-  border-right: 1px solid var(--color-border);
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
 }
 
-.toolbar__group:last-child {
-  border-right: none;
+.toolbar__group + .toolbar__group {
+  position: relative;
+  padding-left: var(--space-3);
+  margin-left: var(--space-2);
 }
 
-.toolbar button.tool-btn {
+.toolbar__group + .toolbar__group::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 16px;
+  transform: translateY(-50%);
+  border-left: 1px solid var(--color-border-strong);
+}
+
+/* The spacer pushes the theme group right; a divider there would float. */
+.toolbar__spacer + .toolbar__group::before {
+  display: none;
+}
+
+.toolbar__label {
+  font-size: var(--text-xs);
+  color: var(--color-text-dim);
+  margin-right: var(--space-2);
+  user-select: none;
+}
+
+/* Ghost buttons: quiet by default, soft tint on hover. Also used inside the
+   right panel (convert actions), so not scoped to .toolbar. */
+button.tool-btn {
   background: transparent;
-  color: var(--color-text);
+  color: var(--color-text-dim);
   border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 6px 10px;
-  font-size: 12px;
+  border-radius: var(--radius-md);
+  padding: 4px 9px;
+  font-size: var(--text-sm);
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
     border-color var(--motion-duration-fast) var(--motion-ease-standard),
     transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.toolbar button.tool-btn:hover {
-  background: var(--color-bg-elevated);
+button.tool-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+button.tool-btn:active {
+  transform: scale(0.97);
+  background: var(--color-bg-active);
+}
+
+.right-panel button.tool-btn {
   border-color: var(--color-border);
-}
-
-.toolbar button.tool-btn:active {
-  transform: scale(0.96);
-  background: var(--color-bg-elevated);
-}
-
-.toolbar button.tool-btn:focus {
-  outline: none;
-}
-
-.toolbar button.tool-btn:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 2px;
+  color: var(--color-text);
 }
 
 .toolbar select,
@@ -168,23 +309,21 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 5px 6px;
-  font-size: 12px;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+  border-radius: var(--radius-md);
+  padding: 3px var(--space-3);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.toolbar select:hover {
-  border-color: var(--color-accent);
+.toolbar select:hover,
+.toolbar input[type='text']:hover {
+  border-color: var(--color-border-strong);
 }
 
-.toolbar select:focus {
-  outline: none;
-}
-
-.toolbar select:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 2px;
+.toolbar select:focus-visible,
+.toolbar input[type='text']:focus-visible {
   border-color: var(--color-accent);
 }
 
@@ -192,7 +331,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 8px;
+  padding: 5px 7px;
 }
 
 /* Show the icon of the theme a click switches to: sun in dark, moon in light. */
@@ -216,13 +355,13 @@ body {
    horizontally scrolling toolbar cannot clip it. */
 .dropdown-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-dropdown);
   min-width: 180px;
-  padding: 4px;
+  padding: var(--space-2);
   background: var(--color-bg-elevated);
   color: var(--color-text);
   border: 1px solid var(--color-border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-elevated);
 }
 
@@ -235,36 +374,30 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: var(--space-6);
   background: transparent;
   color: inherit;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px var(--space-3);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
 }
 
 .dropdown-menu__item:hover,
 .dropdown-menu__item:focus {
-  background: var(--color-bg-alt);
-  border-color: var(--color-border);
-}
-
-.dropdown-menu__item:focus {
-  outline: none;
+  background: var(--color-bg-hover);
 }
 
 .dropdown-menu__item:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: -2px;
+  box-shadow: inset 0 0 0 2px var(--focus-ring-color);
 }
 
 .dropdown-menu__shortcut {
   color: var(--color-text-dim);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 /* Toast notifications (non-blocking, stacked, auto-dismissing).
@@ -278,13 +411,13 @@ body {
    for the new anchor. */
 .toast-container {
   position: fixed;
-  right: 16px;
-  top: 16px;
-  z-index: 1100;
+  right: var(--space-5);
+  top: var(--space-5);
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-width: min(400px, calc(100vw - 32px));
+  gap: var(--space-3);
+  max-width: min(380px, calc(100vw - 32px));
   pointer-events: none;
 }
 
@@ -294,14 +427,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 18px 22px 20px;
+  gap: var(--space-4);
+  padding: 14px 16px 16px;
   background: var(--color-bg-elevated);
   color: var(--color-text);
   border: 1px solid var(--color-border-strong);
-  border-left: 5px solid var(--color-accent);
-  border-radius: 8px;
-  font-size: 15px;
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-md);
   font-weight: 500;
   box-shadow: var(--shadow-toast);
   pointer-events: auto;
@@ -364,7 +497,7 @@ body {
 }
 
 .toast--info .toast__icon {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .toast__message {
@@ -379,26 +512,17 @@ body {
   border: none;
   color: var(--color-text-dim);
   cursor: pointer;
-  font-size: 15px;
+  font-size: var(--text-md);
   line-height: 1;
-  padding: 4px;
-  border-radius: 4px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
   transition: color var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .toast__close:hover {
   color: var(--color-text);
-  background: var(--color-bg);
-}
-
-.toast__close:focus {
-  outline: none;
-}
-
-.toast__close:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 1px;
+  background: var(--color-bg-hover);
 }
 
 /* Remaining-time indicator (T1): a full-width bar under the toast that
@@ -410,8 +534,8 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 3px;
-  background: rgba(128, 128, 128, 0.2);
+  height: 2px;
+  background: var(--color-bg-hover);
 }
 
 .toast__progress-bar {
@@ -472,8 +596,8 @@ body {
 .right-panel.collapsed .right-panel__header {
   flex-direction: column;
   justify-content: flex-start;
-  gap: 12px;
-  padding: 10px 0;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
   border-bottom: none;
   flex: 1;
   cursor: pointer;
@@ -491,17 +615,17 @@ body {
 
 .sidebar.collapsed .icon-btn,
 .right-panel.collapsed .icon-btn {
-  width: 26px;
-  height: 26px;
-  color: var(--color-accent);
-  border-color: var(--color-accent);
+  width: 24px;
+  height: 24px;
+  color: var(--color-accent-text);
+  border-color: var(--color-border-strong);
 }
 
 /* Vertical caption shown only on the collapsed rail, naming what expands. */
 .rail-label {
   display: none;
   writing-mode: vertical-rl;
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-text-dim);
@@ -538,10 +662,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
-  font-size: 11px;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--color-text-dim);
   border-bottom: 1px solid var(--color-border);
 }
@@ -549,30 +674,35 @@ body {
 .sidebar__list {
   flex: 1;
   overflow-y: auto;
+  padding: var(--space-2);
 }
 
 .sidebar__item {
-  padding: 6px 10px;
+  padding: 5px var(--space-3);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
-  border-left: 2px solid transparent;
+  font-size: var(--text-sm);
+  color: var(--color-text-dim);
+  border-radius: var(--radius-md);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .sidebar__item:hover {
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-hover);
+  color: var(--color-text);
 }
 
 .sidebar__item.active {
-  border-left-color: var(--color-accent);
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-active);
+  color: var(--color-text);
 }
 
 .sidebar__item-meta {
   display: block;
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-dim);
 }
 
@@ -594,40 +724,36 @@ body {
    right offset clears the vertical scrollbar so it never covers it. */
 .copy-btn {
   position: absolute;
-  top: 8px;
-  right: 24px;
-  z-index: 5;
+  top: var(--space-3);
+  right: var(--space-6);
+  z-index: var(--z-raised);
   background: var(--color-bg-elevated);
-  color: var(--color-text);
+  color: var(--color-text-dim);
   border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
-  padding: 4px 10px;
-  font-size: 12px;
+  border-radius: var(--radius-md);
+  padding: 3px var(--space-3);
+  font-size: var(--text-xs);
   font-family: var(--font-ui);
   cursor: pointer;
   opacity: 0.85;
   transition: opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
     border-color var(--motion-duration-fast) var(--motion-ease-standard),
     transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .copy-btn:hover {
   opacity: 1;
+  color: var(--color-text);
   border-color: var(--color-accent);
 }
 
 .copy-btn:active {
-  transform: scale(0.96);
-}
-
-.copy-btn:focus {
-  outline: none;
+  transform: scale(0.97);
 }
 
 .copy-btn:focus-visible {
   opacity: 1;
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 2px;
 }
 
 .editor-pane[data-mode='diff'] .editor {
@@ -679,27 +805,35 @@ body {
 .right-panel__header {
   display: flex;
   justify-content: flex-end;
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
 }
 
+/* Segmented, pill-style tabs. */
 .tabs {
   display: flex;
-  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-1);
+  margin: var(--space-3);
+  padding: var(--space-1);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
   overflow-x: auto;
 }
 
 .tab {
+  flex: 1;
   background: transparent;
   border: none;
   color: var(--color-text-dim);
-  padding: 8px 10px;
-  font-size: 11px;
+  padding: 4px var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md);
   transition: color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .tab:hover {
@@ -708,22 +842,13 @@ body {
 
 .tab.active {
   color: var(--color-text);
-  border-bottom-color: var(--color-accent);
-}
-
-.tab:focus {
-  outline: none;
-}
-
-.tab:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: -2px;
+  background: var(--color-bg-active);
 }
 
 .tab-panels {
   flex: 1;
   overflow: auto;
-  padding: 10px;
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .tab-panel {
@@ -753,27 +878,18 @@ body {
   background: transparent;
   border: 1px solid transparent;
   color: var(--color-text-dim);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   width: 24px;
   height: 24px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-base);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .icon-btn:hover {
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-hover);
   color: var(--color-text);
-}
-
-.icon-btn:focus {
-  outline: none;
-}
-
-.icon-btn:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 2px;
 }
 
 /* Status bar */
@@ -782,16 +898,16 @@ body {
   min-height: var(--statusbar-height);
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 12px;
+  gap: var(--space-5);
+  padding: 0 var(--space-4);
   background: var(--color-bg-alt);
   border-top: 1px solid var(--color-border);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--color-text-dim);
 }
 
 .statusbar__filename {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -819,7 +935,7 @@ body {
 .statusbar__indicator {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .statusbar__dot {
@@ -828,11 +944,14 @@ body {
   height: 8px;
   border-radius: 50%;
   background: var(--color-success);
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 20%, transparent);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .statusbar__dot.invalid {
   background: var(--color-error);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 20%, transparent);
 }
 
 /* Validity flip feedback (T5): a pulse when valid/invalid actually
@@ -859,21 +978,21 @@ body {
 /* Tree view */
 .tree-node {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
 .tree-node__row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 0;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .tree-node__row:hover {
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-hover);
 }
 
 .tree-node__toggle {
@@ -890,12 +1009,12 @@ body {
 }
 
 .tree-node__key {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .tree-node__type {
   color: var(--color-text-dim);
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 
 .tree-node__value {
@@ -924,68 +1043,82 @@ body {
 }
 
 .tree-node__children {
-  margin-left: 14px;
-  border-left: 1px dashed var(--color-border);
-  padding-left: 8px;
+  margin-left: 10px;
+  border-left: 1px solid var(--color-border);
+  padding-left: var(--space-3);
 }
 
-/* Diff view */
+/* Diff view. Tints derive from the status colors so they work in both
+   themes. */
 .diff-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .diff-entry {
-  padding: 6px 8px;
-  border-radius: 4px;
-  border-left: 3px solid transparent;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-md);
+  border-left: 2px solid transparent;
 }
 
 .diff-entry--added {
-  background: rgba(76, 175, 109, 0.12);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
   border-left-color: var(--color-success);
 }
 
 .diff-entry--removed {
-  background: rgba(224, 90, 90, 0.12);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
   border-left-color: var(--color-error);
 }
 
 .diff-entry--modified {
-  background: rgba(217, 164, 65, 0.12);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
   border-left-color: var(--color-warning);
 }
 
 .diff-entry--moved {
-  background: rgba(108, 140, 255, 0.12);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-left-color: var(--color-accent);
 }
 
 .diff-entry__path {
   color: var(--color-text-dim);
   display: block;
-  margin-bottom: 2px;
+  margin-bottom: var(--space-1);
 }
 
 /* Query panel */
 .query-input {
   width: 100%;
-  padding: 6px 8px;
+  padding: 6px var(--space-3);
   background: var(--color-bg);
   color: var(--color-text);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 12px;
-  margin-bottom: 8px;
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-3);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.query-input:hover {
+  border-color: var(--color-border-strong);
+}
+
+.query-input:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.query-input::placeholder {
+  color: var(--color-text-dim);
 }
 
 .query-results {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -994,31 +1127,35 @@ body {
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
 .stats-tile {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  padding: 10px var(--space-4);
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+.stats-tile:hover {
+  border-color: var(--color-border-strong);
+}
+
 .stats-tile__label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.05em;
   color: var(--color-text-dim);
   text-transform: uppercase;
 }
 
 .stats-tile__value {
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 600;
   line-height: 1.2;
   color: var(--color-text);
@@ -1027,27 +1164,27 @@ body {
 
 /* Stats panel: type histogram */
 .stats-histogram__title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--color-text-dim);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
 .stats-histogram__list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .stats-histogram__row {
   display: grid;
   grid-template-columns: 56px 1fr 28px;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  padding: 2px 0;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  padding: var(--space-1) 0;
   transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
@@ -1068,8 +1205,8 @@ body {
 .stats-histogram__bar-track {
   position: relative;
   height: 6px;
-  border-radius: 3px;
-  background: var(--color-bg-alt);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-active);
   overflow: hidden;
 }
 
@@ -1077,7 +1214,7 @@ body {
   height: 100%;
   width: var(--bar-percent, 0%);
   background: var(--color-accent);
-  border-radius: 3px;
+  border-radius: var(--radius-full);
   transition: width var(--motion-duration-base) var(--motion-ease-decelerate);
 }
 
@@ -1096,14 +1233,14 @@ body {
 .dropzone-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(108, 140, 255, 0.15);
-  border: 3px dashed var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border: 2px dashed var(--color-accent);
   display: none;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  color: var(--color-accent);
-  z-index: 1000;
+  font-size: var(--text-xl);
+  color: var(--color-accent-text);
+  z-index: var(--z-dropdown);
   pointer-events: none;
 }
 
@@ -1116,28 +1253,51 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 0;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--color-border);
 }
 
 .settings-row__label {
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .settings-row__desc {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--color-text-dim);
-  margin-top: 2px;
+  margin-top: var(--space-1);
+}
+
+.settings-row input,
+.settings-row select {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 3px var(--space-3);
+  font-size: var(--text-sm);
+}
+
+button.primary,
+button.danger {
+  color: var(--color-on-accent);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 5px var(--space-4);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+button.primary:active,
+button.danger:active {
+  transform: scale(0.97);
 }
 
 button.primary {
   background: var(--color-accent);
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  padding: 6px 12px;
-  cursor: pointer;
-  font-size: 12px;
 }
 
 button.primary:hover {
@@ -1146,12 +1306,10 @@ button.primary:hover {
 
 button.danger {
   background: var(--color-error);
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  padding: 6px 12px;
-  cursor: pointer;
-  font-size: 12px;
+}
+
+button.danger:hover {
+  background: color-mix(in srgb, var(--color-error) 85%, white);
 }
 
 /* Responsive: stay sane on small windows */

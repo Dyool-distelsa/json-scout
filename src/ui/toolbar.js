@@ -66,8 +66,7 @@ export function createToolbar(container, handlers) {
   const indentGroup = document.createElement('div');
   indentGroup.className = 'toolbar__group';
   const indentLabel = document.createElement('label');
-  indentLabel.style.fontSize = '11px';
-  indentLabel.style.color = 'var(--color-text-dim)';
+  indentLabel.className = 'toolbar__label';
   indentLabel.textContent = 'Indent';
   const indentSelect = document.createElement('select');
   indentSelect.title = 'Indent style used by Format';

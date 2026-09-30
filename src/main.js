@@ -477,12 +477,18 @@ document.getElementById('copy-btn').addEventListener('click', async () => {
 
 createToolbar(document.getElementById('toolbar'), handlers);
 
-document.getElementById('sidebar-collapse').addEventListener('click', () => {
-  document.getElementById('sidebar').classList.toggle('collapsed');
-});
-document.getElementById('right-panel-collapse').addEventListener('click', () => {
-  document.getElementById('right-panel').classList.toggle('collapsed');
-});
+function wireCollapse(panelId, buttonId, label, collapseGlyph, expandGlyph) {
+  const panel = document.getElementById(panelId);
+  const button = document.getElementById(buttonId);
+  button.addEventListener('click', () => {
+    const collapsed = panel.classList.toggle('collapsed');
+    button.textContent = collapsed ? expandGlyph : collapseGlyph;
+    button.title = `${collapsed ? 'Expand' : 'Collapse'} ${label}`;
+    button.setAttribute('aria-expanded', String(!collapsed));
+  });
+}
+wireCollapse('sidebar', 'sidebar-collapse', 'sidebar', '«', '»');
+wireCollapse('right-panel', 'right-panel-collapse', 'panel', '»', '«');
 
 const dropzoneOverlay = document.createElement('div');
 dropzoneOverlay.className = 'dropzone-overlay';

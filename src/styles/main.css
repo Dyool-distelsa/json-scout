@@ -16,6 +16,7 @@
   --statusbar-height: 26px;
   --sidebar-width: 220px;
   --right-panel-width: 320px;
+  --rail-width: 32px;
 
   /* Motion system (T6): the one shared scale every transition/animation in
      this file draws from, so tuning feel or disabling motion never means
@@ -441,9 +442,24 @@ body {
 }
 
 .sidebar.collapsed {
-  width: 0;
-  min-width: 0;
-  border-right: none;
+  width: var(--rail-width);
+  min-width: var(--rail-width);
+}
+
+/* Collapsed panels shrink to a slim rail that keeps the toggle button
+   reachable; everything else is hidden. */
+.sidebar.collapsed .sidebar__header,
+.right-panel.collapsed .right-panel__header {
+  justify-content: center;
+  padding: 8px 0;
+  border-bottom: none;
+}
+
+.sidebar.collapsed .sidebar__header > span,
+.sidebar.collapsed .sidebar__list,
+.right-panel.collapsed .tabs,
+.right-panel.collapsed .tab-panels {
+  display: none;
 }
 
 .sidebar__header {
@@ -584,9 +600,8 @@ body {
 }
 
 .right-panel.collapsed {
-  width: 0;
-  min-width: 0;
-  border-left: none;
+  width: var(--rail-width);
+  min-width: var(--rail-width);
 }
 
 .right-panel__header {

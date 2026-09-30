@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SHORTCUTS, matchShortcut, formatShortcut } from './shortcuts.js';
+import { SHORTCUTS, matchShortcut, formatShortcut, shouldFireShortcut } from './shortcuts.js';
 
 const ev = (key, mods = {}) => ({
   key,
@@ -89,5 +89,20 @@ describe('formatShortcut', () => {
   it('returns an empty string for unknown actions', () => {
     expect(formatShortcut('nope', false)).toBe('');
     expect(formatShortcut('nope', true)).toBe('');
+  });
+});
+
+describe('shouldFireShortcut', () => {
+  it('fires on the first press of a bound combination', () => {
+    expect(shouldFireShortcut(ev('b', { ctrlKey: true }))).toBe('toggleSidebar');
+  });
+
+  it('ignores auto-repeat while the key is held', () => {
+    expect(shouldFireShortcut(ev('b', { ctrlKey: true, repeat: true }))).toBeNull();
+    expect(shouldFireShortcut(ev('F', { ctrlKey: true, shiftKey: true, repeat: true }))).toBeNull();
+  });
+
+  it('returns null for unbound combinations', () => {
+    expect(shouldFireShortcut(ev('z', { ctrlKey: true }))).toBeNull();
   });
 });

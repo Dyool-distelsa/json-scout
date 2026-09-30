@@ -7,7 +7,7 @@ import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
-import { matchShortcut } from './ui/shortcuts.js';
+import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
 import { flashEditor } from './ui/feedback.js';
 
 import { formatJson } from './tools/format.js';
@@ -539,8 +539,9 @@ window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented) return;
   const action = matchShortcut(e);
   if (!action || !shortcutActions[action]) return;
+  // Swallow the browser default even on auto-repeat, but only run once.
   e.preventDefault();
-  shortcutActions[action]();
+  if (shouldFireShortcut(e)) shortcutActions[action]();
 });
 
 // Startup payload: CLI-launched file/dir, or a second-instance re-invoke.

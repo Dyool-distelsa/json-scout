@@ -4,7 +4,7 @@ version = "0.2.2"
 description = "A lightweight cross-platform desktop JSON toolbox"
 authors = ["json-scout"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.77.2"
 
 [lib]
 name = "json_scout_lib"

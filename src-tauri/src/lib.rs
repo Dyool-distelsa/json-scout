@@ -1,6 +1,7 @@
 mod cli;
 mod fs_ops;
 mod shell_integration;
+mod vault;
 
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};

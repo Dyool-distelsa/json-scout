@@ -1,4 +1,12 @@
 import { createDropdownMenu } from './fileMenu.js';
+import { formatShortcut, detectMac } from './shortcuts.js';
+
+const isMac = detectMac();
+/** Append the shortcut hint for `action` to a tooltip, if it has one. */
+function withHint(title, action) {
+  const hint = formatShortcut(action, isMac);
+  return hint ? `${title} (${hint})` : title;
+}
 
 /**
  * Build the main toolbar. `handlers` is a map of action name -> callback,
@@ -13,11 +21,11 @@ export function createToolbar(container, handlers) {
   const groups = [
     {
       buttons: [
-        { key: 'format', label: 'Format', title: 'Format (Ctrl+Shift+F)' },
-        { key: 'minify', label: 'Minify', title: 'Minify (Ctrl+Shift+M)' },
-        { key: 'validate', label: 'Validate', title: 'Validate JSON' },
-        { key: 'repair', label: 'Repair', title: 'Repair malformed JSON' },
-        { key: 'sortKeys', label: 'Sort Keys', title: 'Sort object keys alphabetically' },
+        { key: 'format', label: 'Format', title: withHint('Format', 'format') },
+        { key: 'minify', label: 'Minify', title: withHint('Minify', 'minify') },
+        { key: 'validate', label: 'Validate', title: withHint('Validate JSON', 'validate') },
+        { key: 'repair', label: 'Repair', title: withHint('Repair malformed JSON', 'repair') },
+        { key: 'sortKeys', label: 'Sort Keys', title: withHint('Sort object keys alphabetically', 'sortKeys') },
       ],
     },
     {
@@ -27,7 +35,7 @@ export function createToolbar(container, handlers) {
       ],
     },
     {
-      buttons: [{ key: 'diffToggle', label: 'Diff', title: 'Toggle two-pane compare mode' }],
+      buttons: [{ key: 'diffToggle', label: 'Diff', title: withHint('Toggle two-pane compare mode', 'diffToggle') }],
     },
   ];
 
@@ -38,9 +46,9 @@ export function createToolbar(container, handlers) {
     label: 'File',
     title: 'Open and save files',
     items: [
-      { key: 'open', label: 'Open', shortcut: 'Ctrl+O' },
-      { key: 'save', label: 'Save', shortcut: 'Ctrl+S' },
-      { key: 'saveAs', label: 'Save As' },
+      { key: 'open', label: 'Open', shortcut: formatShortcut('open', isMac) },
+      { key: 'save', label: 'Save', shortcut: formatShortcut('save', isMac) },
+      { key: 'saveAs', label: 'Save As', shortcut: formatShortcut('saveAs', isMac) },
     ],
     onSelect: (key) => handlers[key]?.(),
   });
@@ -99,7 +107,7 @@ export function createToolbar(container, handlers) {
   // Both icons are present; CSS shows the one for the mode a click switches to.
   themeBtn.innerHTML =
     '<svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
-  themeBtn.title = 'Toggle dark/light theme';
+  themeBtn.title = withHint('Toggle dark/light theme', 'themeToggle');
   themeBtn.setAttribute('aria-label', 'Toggle dark/light theme');
   themeBtn.addEventListener('click', () => handlers.themeToggle?.());
   themeGroup.appendChild(themeBtn);

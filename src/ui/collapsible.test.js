@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collapseToggleState } from './collapsible.js';
+import { collapseToggleState, shouldToggleOnHeaderClick } from './collapsible.js';
 
 describe('collapseToggleState', () => {
   it('offers to collapse an expanded panel', () => {
@@ -14,5 +14,17 @@ describe('collapseToggleState', () => {
       title: 'Expand Tools',
       ariaExpanded: 'false',
     });
+  });
+});
+
+describe('shouldToggleOnHeaderClick', () => {
+  it('expands a collapsed rail on any click', () => {
+    expect(shouldToggleOnHeaderClick(true, false)).toBe(true);
+    expect(shouldToggleOnHeaderClick(true, true)).toBe(true);
+  });
+
+  it('collapses an expanded panel only when a button was clicked', () => {
+    expect(shouldToggleOnHeaderClick(false, true)).toBe(true);
+    expect(shouldToggleOnHeaderClick(false, false)).toBe(false);
   });
 });

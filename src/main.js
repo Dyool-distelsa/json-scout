@@ -6,7 +6,8 @@ import { createSidebar } from './ui/sidebar.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
-import { collapseToggleState } from './ui/collapsible.js';
+import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
+import { matchShortcut } from './ui/shortcuts.js';
 
 import { formatJson } from './tools/format.js';
 import { minifyJson } from './tools/minify.js';
@@ -483,17 +484,20 @@ function wireCollapse(panelId, buttonId, label) {
   const button = document.getElementById(buttonId);
   const header = button.parentElement;
   // A collapsed panel is a slim rail: clicking anywhere on it expands it.
-  header.addEventListener('click', (event) => {
-    const collapsed = panel.classList.contains('collapsed');
-    if (!collapsed && !event.target.closest('button')) return;
+  const toggle = () => {
     const next = panel.classList.toggle('collapsed');
     const state = collapseToggleState(next, label);
     button.title = state.title;
     button.setAttribute('aria-expanded', state.ariaExpanded);
+  };
+  header.addEventListener('click', (event) => {
+    const collapsed = panel.classList.contains('collapsed');
+    if (shouldToggleOnHeaderClick(collapsed, !!event.target.closest('button'))) toggle();
   });
+  return toggle;
 }
-wireCollapse('sidebar', 'sidebar-collapse', 'Files');
-wireCollapse('right-panel', 'right-panel-collapse', 'Tools');
+const toggleSidebar = wireCollapse('sidebar', 'sidebar-collapse', 'Files');
+const toggleRightPanel = wireCollapse('right-panel', 'right-panel-collapse', 'Tools');
 
 const dropzoneOverlay = document.createElement('div');
 dropzoneOverlay.className = 'dropzone-overlay';
@@ -512,23 +516,19 @@ initDragAndDrop(dropzoneOverlay, (path, contents) => {
 });
 
 // Keyboard shortcuts
+const shortcutActions = {
+  ...handlers,
+  toggleSidebar,
+  toggleRightPanel,
+};
 window.addEventListener('keydown', (e) => {
-  const mod = e.ctrlKey || e.metaKey;
-  if (!mod) return;
-  if (e.shiftKey && e.key.toLowerCase() === 'f') {
-    e.preventDefault();
-    handlers.format();
-  } else if (e.shiftKey && e.key.toLowerCase() === 'm') {
-    e.preventDefault();
-    handlers.minify();
-  } else if (e.key.toLowerCase() === 's') {
-    e.preventDefault();
-    handlers.save();
-  } else if (e.key.toLowerCase() === 'o') {
-    e.preventDefault();
-    handlers.open();
-  }
-  // Ctrl+F is left to CodeMirror's own search keymap.
+  // CodeMirror handles its own keys (Mod+F search, undo/redo, fold, ...) first
+  // and marks them handled; never run an app shortcut on top of those.
+  if (e.defaultPrevented) return;
+  const action = matchShortcut(e);
+  if (!action || !shortcutActions[action]) return;
+  e.preventDefault();
+  shortcutActions[action]();
 });
 
 // Startup payload: CLI-launched file/dir, or a second-instance re-invoke.

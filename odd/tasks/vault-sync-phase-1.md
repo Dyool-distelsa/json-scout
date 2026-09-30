@@ -162,5 +162,21 @@ Branch: `feat/vault-sync` from `main` (09ee339). First reviewed boundary: 09ee33
 - `clean(None)` removes whatever root it is given. Guard it with a fixed leaf
   name or a marker file.
 
+## Follow-ups from the T7 review (lineage `review-fb344e7a6042ac52`, approved)
+- On Unix a timeout kills only the direct child. The `az` shell wrapper's
+  Python grandchild can survive and keep the pipes open. Spawn the child in its
+  own process group and kill the whole group.
+- No test proves that `taskkill /T` removes a grandchild. The "child exited but
+  a descendant still holds a pipe" path is also untested.
+- Classification reads only lines that start with `ERROR:`. Continuation lines
+  without the prefix (such as `Code: Forbidden`) are ignored, so a multi-line
+  error can fall through to `cli`. Check real `az` stderr during T6.
+
+- T7 committed in `edccb83`. The user granted its review, which was approved
+  with authority burned (`review-fb344e7a6042ac52`). The reviewed boundary is
+  now `edccb83`. PR1 (backend) is complete on `feat/vault-sync`.
+- T5 goes on the stacked branch `feat/vault-sync-ui`, created from
+  `feat/vault-sync`.
+
 ## Next step
-Review the T7 commit, then T5 (frontend).
+T5 (frontend) on `feat/vault-sync-ui`.

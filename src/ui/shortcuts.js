@@ -33,6 +33,17 @@ export function matchShortcut(event) {
   return hit ? hit.action : null;
 }
 
+/**
+ * Like matchShortcut, but ignores OS auto-repeat so holding a combination
+ * does not re-run toggles (panels, theme, diff) or repeat Format/Save.
+ * @param {{ key: string, ctrlKey?: boolean, metaKey?: boolean, shiftKey?: boolean, altKey?: boolean, repeat?: boolean }} event
+ * @returns {string|null} Action id to run, or null.
+ */
+export function shouldFireShortcut(event) {
+  if (event.repeat) return null;
+  return matchShortcut(event);
+}
+
 const KEY_NAMES = { enter: 'Enter' };
 const MAC_KEY_SYMBOLS = { enter: '↵' };
 

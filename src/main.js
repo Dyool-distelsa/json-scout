@@ -6,6 +6,7 @@ import { createSidebar } from './ui/sidebar.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
+import { collapseToggleState } from './ui/collapsible.js';
 
 import { formatJson } from './tools/format.js';
 import { minifyJson } from './tools/minify.js';
@@ -477,18 +478,22 @@ document.getElementById('copy-btn').addEventListener('click', async () => {
 
 createToolbar(document.getElementById('toolbar'), handlers);
 
-function wireCollapse(panelId, buttonId, label, collapseGlyph, expandGlyph) {
+function wireCollapse(panelId, buttonId, label) {
   const panel = document.getElementById(panelId);
   const button = document.getElementById(buttonId);
-  button.addEventListener('click', () => {
-    const collapsed = panel.classList.toggle('collapsed');
-    button.textContent = collapsed ? expandGlyph : collapseGlyph;
-    button.title = `${collapsed ? 'Expand' : 'Collapse'} ${label}`;
-    button.setAttribute('aria-expanded', String(!collapsed));
+  const header = button.parentElement;
+  // A collapsed panel is a slim rail: clicking anywhere on it expands it.
+  header.addEventListener('click', (event) => {
+    const collapsed = panel.classList.contains('collapsed');
+    if (!collapsed && !event.target.closest('button')) return;
+    const next = panel.classList.toggle('collapsed');
+    const state = collapseToggleState(next, label);
+    button.title = state.title;
+    button.setAttribute('aria-expanded', state.ariaExpanded);
   });
 }
-wireCollapse('sidebar', 'sidebar-collapse', 'sidebar', '«', '»');
-wireCollapse('right-panel', 'right-panel-collapse', 'panel', '»', '«');
+wireCollapse('sidebar', 'sidebar-collapse', 'Files');
+wireCollapse('right-panel', 'right-panel-collapse', 'Tools');
 
 const dropzoneOverlay = document.createElement('div');
 dropzoneOverlay.className = 'dropzone-overlay';

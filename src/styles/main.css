@@ -188,6 +188,26 @@ body {
   border-color: var(--color-accent);
 }
 
+.toolbar button.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+}
+
+/* Show the icon of the theme a click switches to: sun in dark, moon in light. */
+.theme-toggle .icon-moon {
+  display: none;
+}
+
+:root[data-theme='light'] .theme-toggle .icon-sun {
+  display: none;
+}
+
+:root[data-theme='light'] .theme-toggle .icon-moon {
+  display: block;
+}
+
 .toolbar__spacer {
   flex: 1;
 }
@@ -450,12 +470,64 @@ body {
    reachable; everything else is hidden. */
 .sidebar.collapsed .sidebar__header,
 .right-panel.collapsed .right-panel__header {
-  justify-content: center;
-  padding: 8px 0;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 10px 0;
   border-bottom: none;
+  flex: 1;
+  cursor: pointer;
 }
 
-.sidebar.collapsed .sidebar__header > span,
+.sidebar.collapsed,
+.right-panel.collapsed {
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.sidebar.collapsed:hover,
+.right-panel.collapsed:hover {
+  background: var(--color-bg-elevated);
+}
+
+.sidebar.collapsed .icon-btn,
+.right-panel.collapsed .icon-btn {
+  width: 26px;
+  height: 26px;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* Vertical caption shown only on the collapsed rail, naming what expands. */
+.rail-label {
+  display: none;
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  user-select: none;
+}
+
+.sidebar.collapsed .rail-label,
+.right-panel.collapsed .rail-label {
+  display: block;
+  order: 2;
+}
+
+/* Chevron points toward the collapse direction; flips when collapsed so it
+   points toward the expand direction. */
+.chevron {
+  display: block;
+  margin: auto;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.sidebar.collapsed .chevron,
+.right-panel.collapsed .chevron {
+  transform: rotate(180deg);
+}
+
+.sidebar.collapsed .sidebar__title,
 .sidebar.collapsed .sidebar__list,
 .right-panel.collapsed .tabs,
 .right-panel.collapsed .tab-panels {

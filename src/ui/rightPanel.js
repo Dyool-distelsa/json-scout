@@ -198,6 +198,10 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
    */
   function renderStats(text, parseResult) {
     const panel = panels.stats;
+    // Animate the entrance only when stats were not already on screen; a
+    // rebuild during typing must not replay the animation.
+    const alreadyShowingStats = panel.querySelector('.stats-grid') !== null;
+    panel.classList.toggle('stats--entering', !alreadyShowingStats);
     panel.innerHTML = '';
     if (!text || text.trim() === '') {
       panel.textContent = 'Nothing to show yet.';

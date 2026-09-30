@@ -16,14 +16,42 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
     panels[panel.dataset.panel] = panel;
   }
 
+  // A single absolutely-positioned pill slides under the active tab instead
+  // of the background snapping between tabs. It is placed without a
+  // transition the first time (so it does not sweep in from the left), and
+  // re-placed on resize since tab widths are fluid.
+  const indicator = document.createElement('span');
+  indicator.className = 'tab-indicator';
+  indicator.setAttribute('aria-hidden', 'true');
+  tabsEl.appendChild(indicator);
+
+  function placeIndicator() {
+    const active = tabs.find((t) => t.classList.contains('active'));
+    // A collapsed panel is display:none, so there is nothing to measure yet.
+    if (!active || active.offsetWidth === 0) return;
+    indicator.style.width = `${active.offsetWidth}px`;
+    indicator.style.transform = `translateX(${active.offsetLeft}px)`;
+    if (!indicator.classList.contains('tab-indicator--ready')) {
+      void indicator.offsetWidth;
+      indicator.classList.add('tab-indicator--ready');
+    }
+  }
+
   tabs.forEach((tab) => {
     tab.addEventListener('click', () => {
       tabs.forEach((t) => t.classList.remove('active'));
       Object.values(panels).forEach((p) => p.classList.remove('active'));
       tab.classList.add('active');
       panels[tab.dataset.tab]?.classList.add('active');
+      placeIndicator();
     });
   });
+
+  placeIndicator();
+  if (typeof ResizeObserver !== 'undefined') {
+    // Also fires when the panel goes from collapsed (display:none) to visible.
+    new ResizeObserver(placeIndicator).observe(tabsEl);
+  }
 
   /**
    * Render one tree row. Object/array nodes only materialize their own
@@ -191,9 +219,11 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
         ['Total keys', stats.totalKeys],
         ['Arrays', stats.arrayCount],
       ];
-      for (const [label, value] of tiles) {
+      tiles.forEach(([label, value], index) => {
         const tile = document.createElement('div');
         tile.className = 'stats-tile';
+        // Drives the CSS entrance stagger (animation-delay).
+        tile.style.setProperty('--i', String(index));
         const labelEl = document.createElement('span');
         labelEl.className = 'stats-tile__label';
         labelEl.textContent = label;
@@ -203,7 +233,7 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
         tile.appendChild(labelEl);
         tile.appendChild(valueEl);
         grid.appendChild(tile);
-      }
+      });
       panel.appendChild(grid);
 
       const histogram = document.createElement('div');
@@ -218,9 +248,10 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
       list.className = 'stats-histogram__list';
       const counts = Object.values(stats.typeHistogram);
       const maxCount = Math.max(1, ...counts);
-      for (const [type, count] of Object.entries(stats.typeHistogram)) {
+      Object.entries(stats.typeHistogram).forEach(([type, count], index) => {
         const row = document.createElement('div');
         row.className = 'stats-histogram__row';
+        row.style.setProperty('--i', String(index));
         if (count === 0) row.classList.add('stats-histogram__row--zero');
 
         const labelEl = document.createElement('span');
@@ -243,7 +274,7 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
         row.appendChild(barTrack);
         row.appendChild(countEl);
         list.appendChild(row);
-      }
+      });
       histogram.appendChild(list);
       panel.appendChild(histogram);
     } catch (err) {

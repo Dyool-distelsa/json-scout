@@ -117,6 +117,8 @@
   *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+    /* Staggered entrances must not leave content hidden during their delay. */
+    animation-delay: 0s !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
@@ -212,10 +214,28 @@ textarea {
 }
 
 #app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100vw;
+}
+
+/* Very faint accent glow along the top edge: static, non-interactive. */
+#app::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 140px;
+  background: radial-gradient(
+    ellipse 60% 100% at 50% 0%,
+    color-mix(in srgb, var(--color-accent) 9%, transparent),
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: var(--z-raised);
 }
 
 /* Toolbar */
@@ -363,10 +383,33 @@ button.tool-btn:active {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-elevated);
+  /* Toggling [hidden] flips display, which restarts this on every open. */
+  animation: menu-in var(--motion-duration-fast) var(--motion-ease-decelerate);
 }
 
 .dropdown-menu[hidden] {
   display: none;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Glass surface for floating layers; solid fallback above where unsupported. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dropdown-menu,
+  .toast {
+    background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+  }
 }
 
 .dropdown-menu__item {
@@ -384,6 +427,7 @@ button.tool-btn:active {
   font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .dropdown-menu__item:hover,
@@ -583,6 +627,9 @@ button.tool-btn:active {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width var(--motion-duration-slow) var(--motion-ease-standard),
+    min-width var(--motion-duration-slow) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .sidebar.collapsed {
@@ -601,11 +648,6 @@ button.tool-btn:active {
   border-bottom: none;
   flex: 1;
   cursor: pointer;
-}
-
-.sidebar.collapsed,
-.right-panel.collapsed {
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .sidebar.collapsed:hover,
@@ -632,10 +674,22 @@ button.tool-btn:active {
   user-select: none;
 }
 
+/* The caption fades in once the width animation has mostly finished. */
 .sidebar.collapsed .rail-label,
 .right-panel.collapsed .rail-label {
   display: block;
   order: 2;
+  animation: rail-in var(--motion-duration-base) var(--motion-ease-decelerate)
+    var(--motion-duration-base) both;
+}
+
+@keyframes rail-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Chevron points toward the collapse direction; flips when collapsed so it
@@ -673,6 +727,8 @@ button.tool-btn:active {
 
 .sidebar__list {
   flex: 1;
+  /* Keep the expanded width during the collapse animation (clipped, not reflowed). */
+  min-width: 140px;
   overflow-y: auto;
   padding: var(--space-2);
 }
@@ -761,10 +817,30 @@ button.tool-btn:active {
 }
 
 .editor {
+  position: relative;
   flex: 1;
   min-width: 0;
   height: 100%;
   overflow: hidden;
+}
+
+/* Success flash (see ui/feedback.js): a brief inset accent glow. */
+.editor.is-flashing::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: editor-flash 560ms var(--motion-ease-standard) both;
+}
+
+@keyframes editor-flash {
+  0% {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 70%, transparent),
+      inset 0 0 32px color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 1px transparent, inset 0 0 32px transparent;
+  }
 }
 
 .editor-pane__diff-container {
@@ -795,6 +871,15 @@ button.tool-btn:active {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width var(--motion-duration-slow) var(--motion-ease-standard),
+    min-width var(--motion-duration-slow) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Keep the expanded layout width during the collapse animation (clipped). */
+.right-panel .tabs,
+.right-panel .tab-panels {
+  min-width: 220px;
 }
 
 .right-panel.collapsed {
@@ -811,6 +896,7 @@ button.tool-btn:active {
 
 /* Segmented, pill-style tabs. */
 .tabs {
+  position: relative;
   display: flex;
   gap: var(--space-1);
   margin: var(--space-3);
@@ -832,17 +918,41 @@ button.tool-btn:active {
   cursor: pointer;
   white-space: nowrap;
   border-radius: var(--radius-md);
+  /* Sits above the sliding indicator. */
+  position: relative;
+  z-index: 1;
   transition: color var(--motion-duration-fast) var(--motion-ease-standard),
-    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .tab:hover {
   color: var(--color-text);
 }
 
+.tab:active {
+  transform: scale(0.97);
+}
+
 .tab.active {
   color: var(--color-text);
+}
+
+/* Single pill that slides and resizes to the active tab (placed by JS). */
+.tab-indicator {
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  left: 0;
+  width: 0;
+  border-radius: var(--radius-md);
   background: var(--color-bg-active);
+  pointer-events: none;
+}
+
+/* Enabled after the first placement so it does not sweep in from the left. */
+.tab-indicator--ready {
+  transition: transform var(--motion-duration-base) var(--motion-ease-standard),
+    width var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .tab-panels {
@@ -884,12 +994,17 @@ button.tool-btn:active {
   cursor: pointer;
   font-size: var(--text-base);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .icon-btn:hover {
   background: var(--color-bg-hover);
   color: var(--color-text);
+}
+
+.icon-btn:active {
+  transform: scale(0.97);
 }
 
 /* Status bar */
@@ -1140,6 +1255,20 @@ button.tool-btn:active {
   border-radius: var(--radius-lg);
   padding: 10px var(--space-4);
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+  /* --i (set in JS) staggers the entrance tile by tile. */
+  animation: stat-in var(--motion-duration-slow) var(--motion-ease-decelerate) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+@keyframes stat-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .stats-tile:hover {
@@ -1215,7 +1344,15 @@ button.tool-btn:active {
   width: var(--bar-percent, 0%);
   background: var(--color-accent);
   border-radius: var(--radius-full);
-  transition: width var(--motion-duration-base) var(--motion-ease-decelerate);
+  /* Grows from 0 to --bar-percent each time the panel renders. */
+  animation: bar-grow var(--motion-duration-slow) var(--motion-ease-decelerate) both;
+  animation-delay: calc(120ms + var(--i, 0) * 40ms);
+}
+
+@keyframes bar-grow {
+  from {
+    width: 0;
+  }
 }
 
 .stats-histogram__row--zero .stats-histogram__bar {

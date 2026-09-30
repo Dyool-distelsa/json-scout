@@ -14,11 +14,12 @@ import {
   foldKeymap,
   indentOnInput,
   syntaxHighlighting,
-  defaultHighlightStyle,
+  HighlightStyle,
   bracketMatching,
 } from '@codemirror/language';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { tags as t } from '@lezer/highlight';
 import { linter, lintGutter } from '@codemirror/lint';
 import { validateJson } from '../tools/validate.js';
 import { resolveLineColumnOffset } from './editorPosition.js';
@@ -27,28 +28,92 @@ import { shouldProcessPaste } from './pasteRules.js';
 const themeCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
 
-const darkPalette = EditorView.theme(
-  {
-    '&': { color: '#e4e4ec', backgroundColor: '#1e1e24' },
-    '.cm-content': { caretColor: '#6c8cff' },
-    '.cm-gutters': { backgroundColor: '#26262e', color: '#9a9aac', border: 'none' },
-    '.cm-activeLine': { backgroundColor: 'rgba(108,140,255,0.07)' },
-    '.cm-activeLineGutter': { backgroundColor: 'rgba(108,140,255,0.12)' },
-    '.cm-selectionBackground, ::selection': { backgroundColor: 'rgba(108,140,255,0.35) !important' },
+/**
+ * Editor palette. The base values (bg, bgAlt, text, dim, accent) MUST stay in
+ * sync with the matching tokens in src/styles/main.css (--color-bg,
+ * --color-bg-alt, --color-text, --color-text-dim, --color-accent): CodeMirror
+ * themes are built in JS, so they cannot read the CSS custom properties.
+ */
+const palette = {
+  dark: {
+    bg: '#0f1012',
+    bgAlt: '#16171a',
+    text: '#e6e7ea',
+    dim: '#8a8f98',
+    accent: '#5e6ad2',
+    activeLine: 'rgba(255, 255, 255, 0.04)',
+    activeGutter: 'rgba(255, 255, 255, 0.07)',
+    selection: 'rgba(94, 106, 210, 0.38)',
+    match: 'rgba(226, 179, 64, 0.25)',
+    tooltipBg: '#1c1d21',
+    border: 'rgba(255, 255, 255, 0.12)',
+    // JSON syntax colors
+    key: '#9aa4f5',
+    string: '#7fd3a7',
+    number: '#f0b072',
+    keyword: '#d68cf0', // true / false / null
+    punctuation: '#6d727c',
   },
-  { dark: true }
-);
+  light: {
+    bg: '#ffffff',
+    bgAlt: '#f7f7f8',
+    text: '#1c1d21',
+    dim: '#6b6f76',
+    accent: '#5e6ad2',
+    activeLine: 'rgba(15, 16, 20, 0.035)',
+    activeGutter: 'rgba(15, 16, 20, 0.06)',
+    selection: 'rgba(94, 106, 210, 0.22)',
+    match: 'rgba(183, 121, 31, 0.22)',
+    tooltipBg: '#ffffff',
+    border: 'rgba(15, 16, 20, 0.14)',
+    key: '#4a55b8',
+    string: '#1f8a55',
+    number: '#b4581a',
+    keyword: '#9a3fc0',
+    punctuation: '#9a9ea6',
+  },
+};
 
-const lightPalette = EditorView.theme(
-  {
-    '&': { color: '#1b1c22', backgroundColor: '#ffffff' },
-    '.cm-content': { caretColor: '#3457d5' },
-    '.cm-gutters': { backgroundColor: '#f4f5f7', color: '#666a75', border: 'none' },
-    '.cm-activeLine': { backgroundColor: 'rgba(52,87,213,0.06)' },
-    '.cm-activeLineGutter': { backgroundColor: 'rgba(52,87,213,0.1)' },
-  },
-  { dark: false }
-);
+function buildTheme(p, dark) {
+  return EditorView.theme(
+    {
+      '&': { color: p.text, backgroundColor: p.bg },
+      '.cm-content': { caretColor: p.accent },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: p.accent },
+      '.cm-gutters': { backgroundColor: p.bg, color: p.dim, border: 'none' },
+      '.cm-activeLine': { backgroundColor: p.activeLine },
+      '.cm-activeLineGutter': { backgroundColor: p.activeGutter, color: p.text },
+      '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection':
+        { backgroundColor: `${p.selection} !important` },
+      '.cm-selectionMatch': { backgroundColor: p.match },
+      '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
+        backgroundColor: p.selection,
+        outline: 'none',
+      },
+      '.cm-tooltip': {
+        backgroundColor: p.tooltipBg,
+        color: p.text,
+        border: `1px solid ${p.border}`,
+        borderRadius: '6px',
+      },
+      '.cm-panels': { backgroundColor: p.bgAlt, color: p.text },
+    },
+    { dark }
+  );
+}
+
+function buildHighlight(p) {
+  return HighlightStyle.define([
+    { tag: t.propertyName, color: p.key },
+    { tag: t.string, color: p.string },
+    { tag: t.number, color: p.number },
+    { tag: [t.bool, t.null], color: p.keyword },
+    { tag: [t.punctuation, t.separator, t.brace, t.squareBracket], color: p.punctuation },
+  ]);
+}
+
+const darkPalette = [buildTheme(palette.dark, true), syntaxHighlighting(buildHighlight(palette.dark))];
+const lightPalette = [buildTheme(palette.light, false), syntaxHighlighting(buildHighlight(palette.light))];
 
 /**
  * A CodeMirror lint source that runs our own strict JSON validator and
@@ -134,7 +199,6 @@ export function createEditor(parent, options = {}) {
       foldGutter(),
       drawSelection(),
       indentOnInput(),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       bracketMatching(),
       highlightActiveLine(),
       highlightSelectionMatches(),

@@ -61,6 +61,7 @@ pub enum VaultError {
     AzMissing,
     InvalidName,
     Parse,
+    Timeout,
     Io(String),
     Cli(String),
     Internal(String),
@@ -76,6 +77,7 @@ impl VaultError {
             VaultError::AzMissing => "az_missing",
             VaultError::InvalidName => "invalid_name",
             VaultError::Parse => "parse",
+            VaultError::Timeout => "timeout",
             VaultError::Io(_) => "io",
             VaultError::Cli(_) => "cli",
             VaultError::Internal(_) => "internal",
@@ -102,6 +104,9 @@ impl fmt::Display for VaultError {
             VaultError::Parse => {
                 f.write_str("Could not understand the response from the Azure CLI.")
             }
+            VaultError::Timeout => f.write_str(
+                "The Azure CLI did not respond in time. Check your network connection and `az`, then retry.",
+            ),
             VaultError::Io(detail) => write!(f, "File system error: {detail}"),
             VaultError::Cli(detail) => write!(f, "Azure CLI error: {detail}"),
             VaultError::Internal(detail) => write!(f, "Internal error: {detail}"),
@@ -205,6 +210,7 @@ mod tests {
             (VaultError::AzMissing, "az_missing"),
             (VaultError::InvalidName, "invalid_name"),
             (VaultError::Parse, "parse"),
+            (VaultError::Timeout, "timeout"),
             (VaultError::Io("x".into()), "io"),
             (VaultError::Cli("x".into()), "cli"),
             (VaultError::Internal("x".into()), "internal"),
@@ -232,9 +238,18 @@ mod tests {
             VaultError::AzMissing,
             VaultError::InvalidName,
             VaultError::Parse,
+            VaultError::Timeout,
         ] {
             assert!(!error.to_string().is_empty(), "{:?}", error);
         }
+    }
+
+    #[test]
+    fn the_timeout_message_tells_the_user_to_check_the_network_and_az_and_retry() {
+        let message = VaultError::Timeout.to_string();
+        assert!(message.contains("network"), "{message}");
+        assert!(message.contains("`az`"), "{message}");
+        assert!(message.contains("retry"), "{message}");
     }
 
     #[test]

@@ -83,7 +83,12 @@ pub fn write_json_file(path: String, contents: String) -> Result<(), String> {
 }
 
 fn write_json_file_atomic(path: &str, contents: &str) -> std::io::Result<()> {
-    let target = Path::new(path);
+    write_file_atomic(Path::new(path), contents)
+}
+
+/// Atomic write of `contents` to `target` (temp file in the same directory,
+/// fsync, rename). Shared with the vault workspace store.
+pub(crate) fn write_file_atomic(target: &Path, contents: &str) -> std::io::Result<()> {
     let parent = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     let file_name = target
         .file_name()

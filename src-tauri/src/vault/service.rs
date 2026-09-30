@@ -50,22 +50,25 @@ impl<P: SecretProvider> VaultService<P> {
         validate_name(vault)?;
         let mut secrets = self.provider.list(vault)?;
         secrets.sort_by_key(|secret| secret.name.to_lowercase());
-        Ok(secrets
+        secrets
             .into_iter()
             .map(|secret| {
-                // A remote name that cannot be stored locally was never
-                // pulled, so it is simply remote rather than a list failure.
-                let local_state = self
-                    .workspace
-                    .local_state(vault, &secret.name)
-                    .unwrap_or(LocalState::Remote);
-                SecretListItem {
+                let local_state = match self.workspace.local_state(vault, &secret.name) {
+                    Ok(state) => state,
+                    // A remote name that cannot be stored locally was never
+                    // pulled, so it is simply remote rather than a failure.
+                    Err(VaultError::InvalidName) => LocalState::Remote,
+                    // Anything else (an unreadable file, say) means the local
+                    // state is unknown, which must not be shown as remote.
+                    Err(other) => return Err(other),
+                };
+                Ok(SecretListItem {
                     name: secret.name,
                     enabled: secret.enabled,
                     local_state,
-                }
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Fetch one secret and store it in the workspace.
@@ -239,6 +242,18 @@ mod tests {
         let (_dir, svc) = service(provider);
         let items = svc.list("kv").expect("list");
         assert_eq!(items[0].local_state, LocalState::Remote);
+    }
+
+    #[test]
+    fn list_propagates_a_local_state_error_that_is_not_an_invalid_name() {
+        let provider = FakeProvider::new().with_listing(&[("broken", true)]);
+        let (dir, svc) = service(provider);
+        // A directory where the base copy should be a file: reading it fails
+        // with something other than "not found", so the state is unknowable.
+        let unreadable = dir.path().join("vault-sync").join("kv").join(".base").join("broken.json");
+        fs::create_dir_all(&unreadable).unwrap();
+
+        assert!(matches!(svc.list("kv"), Err(VaultError::Io(_))));
     }
 
     #[test]

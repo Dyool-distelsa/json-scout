@@ -12,10 +12,18 @@ use super::domain::{
     validate_name, Identity, SecretProvider, SecretRef, SecretSummary, SecretValue, VaultError,
 };
 use serde_json::Value;
-use std::io;
+use std::io::{self, Read};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 /// Longest stderr excerpt kept in a [`VaultError::Cli`] message.
 const MAX_SUMMARY_CHARS: usize = 300;
+
+/// Upper bound on one `az` invocation.
+pub const AZ_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How often a running child is checked against its deadline.
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Program to spawn: Windows ships the Azure CLI as a `.cmd` shim.
 pub fn az_program() -> &'static str {
@@ -30,7 +38,11 @@ pub fn az_program() -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CmdOutput {
     pub status_ok: bool,
-    pub stdout: String,
+    /// Raw bytes: decoded strictly by the caller, because stdout carries
+    /// secret values and must never be lossily rewritten.
+    pub stdout: Vec<u8>,
+    /// Lossily decoded: stderr never carries secret values and is only
+    /// summarised.
     pub stderr: String,
 }
 
@@ -42,13 +54,34 @@ pub trait CommandRunner: Send + Sync {
 
 /// Spawns real processes with `std::process::Command` (argument array, no
 /// shell, no console window on Windows, stdin closed).
-pub struct SystemRunner;
+pub struct SystemRunner {
+    timeout: Duration,
+}
+
+impl SystemRunner {
+    pub fn new(timeout: Duration) -> Self {
+        SystemRunner { timeout }
+    }
+}
+
+impl Default for SystemRunner {
+    fn default() -> Self {
+        SystemRunner::new(AZ_TIMEOUT)
+    }
+}
 
 impl CommandRunner for SystemRunner {
+    /// Runs `program`, draining both pipes on reader threads so a large
+    /// output cannot fill a pipe buffer and stall the child. If the child is
+    /// still running when the timeout expires it is killed and reaped, and
+    /// the call fails with [`io::ErrorKind::TimedOut`].
     fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput> {
         let mut command = std::process::Command::new(program);
         command
             .args(args)
+            // The Azure CLI is a Python program: without this it encodes
+            // output with the console code page on Windows.
+            .env("PYTHONIOENCODING", "utf-8")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -60,13 +93,92 @@ impl CommandRunner for SystemRunner {
             command.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let output = command.output()?;
+        let deadline = Instant::now() + self.timeout;
+        let mut child = command.spawn()?;
+        let (Some(stdout_pipe), Some(stderr_pipe)) = (child.stdout.take(), child.stderr.take())
+        else {
+            kill_and_reap(&mut child);
+            return Err(io::Error::other("the child output pipes were not captured"));
+        };
+        let stdout = drain(stdout_pipe);
+        let stderr = drain(stderr_pipe);
+
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() >= deadline => {
+                    kill_and_reap(&mut child);
+                    return Err(timed_out());
+                }
+                Ok(None) => std::thread::sleep(POLL_INTERVAL),
+                Err(err) => {
+                    kill_and_reap(&mut child);
+                    return Err(err);
+                }
+            }
+        };
+
+        // The child has exited, so its pipes close once any descendant that
+        // inherited them is gone. Wait for that only until the deadline.
+        let stdout = collect(&stdout, deadline)?;
+        let stderr = collect(&stderr, deadline)?;
         Ok(CmdOutput {
-            status_ok: output.status.success(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status_ok: status.success(),
+            stdout,
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
         })
     }
+}
+
+type Drained = mpsc::Receiver<io::Result<Vec<u8>>>;
+
+/// Read `pipe` to the end on a background thread.
+fn drain<R: Read + Send + 'static>(mut pipe: R) -> Drained {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = pipe.read_to_end(&mut bytes).map(|_| bytes);
+        // The receiver is gone after a timeout; there is nobody to tell.
+        let _ = sender.send(result);
+    });
+    receiver
+}
+
+/// Wait for a drained pipe, giving up at `deadline`.
+fn collect(drained: &Drained, deadline: Instant) -> io::Result<Vec<u8>> {
+    match drained.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(timed_out()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(io::Error::other("the output reader stopped unexpectedly"))
+        }
+    }
+}
+
+fn timed_out() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "the command did not finish in time")
+}
+
+/// Kill `child` and everything it started, then reap it. Best effort: the
+/// reader threads are deliberately not joined, because a descendant that
+/// survives could keep a pipe open and block the join.
+fn kill_and_reap(child: &mut std::process::Child) {
+    // `az.cmd` runs the real CLI as a grandchild, and killing only the shim
+    // would leave it running, so on Windows the whole tree goes.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 pub struct AzCliProvider<R: CommandRunner> {
@@ -83,6 +195,7 @@ impl<R: CommandRunner> AzCliProvider<R> {
         let output = match self.runner.run(az_program(), &args) {
             Ok(output) => output,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Err(VaultError::AzMissing),
+            Err(err) if err.kind() == io::ErrorKind::TimedOut => return Err(VaultError::Timeout),
             Err(err) => return Err(VaultError::Io(err.to_string())),
         };
         if !output.status_ok {
@@ -90,7 +203,9 @@ impl<R: CommandRunner> AzCliProvider<R> {
         }
         // The serde_json error text can quote the offending input, which may
         // hold a secret value, so it is deliberately dropped.
-        serde_json::from_str(&output.stdout).map_err(|_| VaultError::Parse)
+        // Strict decoding: a lossy one would silently rewrite secret bytes.
+        let stdout = std::str::from_utf8(&output.stdout).map_err(|_| VaultError::Parse)?;
+        serde_json::from_str(stdout).map_err(|_| VaultError::Parse)
     }
 }
 
@@ -150,12 +265,7 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
         ]))?;
         let value = shown["value"].as_str().ok_or(VaultError::Parse)?;
         let id = shown["id"].as_str().ok_or(VaultError::Parse)?;
-        let version = id
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .filter(|segment| !segment.is_empty())
-            .ok_or(VaultError::Parse)?;
+        let version = version_from_id(id)?;
         let updated = match &shown["attributes"]["updated"] {
             Value::String(text) => Some(text.clone()),
             Value::Number(number) => Some(number.to_string()),
@@ -169,14 +279,46 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
     }
 }
 
+/// Version segment of a Key Vault secret id shaped like
+/// `https://<vault>.vault.azure.net/secrets/<name>/<version>`. An id that
+/// stops at the name has no version, and the name must not be mistaken for it.
+fn version_from_id(id: &str) -> Result<&str, VaultError> {
+    let mut segments = id.trim_end_matches('/').rsplit('/');
+    match (segments.next(), segments.next(), segments.next()) {
+        (Some(version), Some(name), Some("secrets"))
+            if !version.is_empty() && !name.is_empty() =>
+        {
+            Ok(version)
+        }
+        _ => Err(VaultError::Parse),
+    }
+}
+
 fn to_args(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| arg.to_string()).collect()
 }
 
-/// Classify a failed invocation from its stderr text.
+/// Trimmed stderr lines that start with `ERROR:`, exactly as `az` emits them.
+fn error_lines(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("ERROR:"))
+        .collect()
+}
+
+/// Classify a failed invocation from its stderr text. Only the `ERROR:` lines
+/// are considered when there are any, so a leading `WARNING:` line (for
+/// example an upgrade hint saying "please run ...") cannot misclassify it.
 fn map_failure(stderr: &str) -> VaultError {
-    let lower = stderr.to_lowercase();
-    let mentions = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
+    let errors = error_lines(stderr);
+    let relevant = if errors.is_empty() {
+        stderr.to_lowercase()
+    } else {
+        errors.join("
+").to_lowercase()
+    };
+    let mentions = |needles: &[&str]| needles.iter().any(|needle| relevant.contains(needle));
 
     if mentions(&["az login", "please run", "aadsts", "no subscription"]) {
         VaultError::NotSignedIn
@@ -189,13 +331,16 @@ fn map_failure(stderr: &str) -> VaultError {
     }
 }
 
-/// First non-empty stderr line without the `ERROR:` prefix, bounded in length.
+/// The first `ERROR:` line without its prefix, or the first non-empty line
+/// when there is none, bounded in length.
 fn summarise(stderr: &str) -> String {
-    let first_line = stderr
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("");
+    let first_line = error_lines(stderr).into_iter().next().or_else(|| {
+        stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+    });
+    let first_line = first_line.unwrap_or("");
     let message = first_line
         .strip_prefix("ERROR:")
         .map(str::trim)
@@ -249,7 +394,7 @@ mod tests {
     fn ok(stdout: &str) -> io::Result<CmdOutput> {
         Ok(CmdOutput {
             status_ok: true,
-            stdout: stdout.to_string(),
+            stdout: stdout.as_bytes().to_vec(),
             stderr: String::new(),
         })
     }
@@ -257,7 +402,7 @@ mod tests {
     fn fail(stderr: &str) -> io::Result<CmdOutput> {
         Ok(CmdOutput {
             status_ok: false,
-            stdout: String::new(),
+            stdout: Vec::new(),
             stderr: stderr.to_string(),
         })
     }
@@ -268,6 +413,48 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A built-in command that prints one environment variable.
+    #[cfg(windows)]
+    fn echo_env_command(variable: &str) -> (&'static str, Vec<String>) {
+        ("cmd", strings(&["/C", "echo", &format!("%{variable}%")]))
+    }
+
+    #[cfg(unix)]
+    fn echo_env_command(variable: &str) -> (&'static str, Vec<String>) {
+        ("sh", strings(&["-c", &format!("printf '%s' \"${variable}\"")]))
+    }
+
+    /// A built-in command that outlives any short timeout.
+    #[cfg(windows)]
+    fn sleep_command() -> (&'static str, Vec<String>) {
+        ("ping", strings(&["-n", "8", "127.0.0.1"]))
+    }
+
+    #[cfg(unix)]
+    fn sleep_command() -> (&'static str, Vec<String>) {
+        ("sleep", strings(&["8"]))
+    }
+
+    #[cfg(windows)]
+    fn echo_command(text: &str) -> (&'static str, Vec<String>) {
+        ("cmd", strings(&["/C", "echo", text]))
+    }
+
+    #[cfg(unix)]
+    fn echo_command(text: &str) -> (&'static str, Vec<String>) {
+        ("echo", strings(&[text]))
+    }
+
+    #[cfg(windows)]
+    fn print_file_command(path: &std::path::Path) -> (&'static str, Vec<String>) {
+        ("cmd", strings(&["/C", "type", &path.to_string_lossy()]))
+    }
+
+    #[cfg(unix)]
+    fn print_file_command(path: &std::path::Path) -> (&'static str, Vec<String>) {
+        ("cat", strings(&[&path.to_string_lossy()]))
     }
 
     fn secret_ref(vault: &str, name: &str) -> SecretRef {
@@ -435,6 +622,33 @@ mod tests {
     }
 
     #[test]
+    fn get_accepts_a_versioned_key_vault_id() {
+        let p = provider(vec![ok(
+            r#"{"id":"https://kv-demo.vault.azure.net/secrets/app-config/0123abcd","value":"x"}"#,
+        )]);
+        assert_eq!(p.get(&secret_ref("kv-demo", "app-config")).unwrap().version, "0123abcd");
+    }
+
+    #[test]
+    fn get_rejects_an_id_without_a_version_segment() {
+        // Without the check the secret name would be mistaken for the version.
+        for id in [
+            "https://kv-demo.vault.azure.net/secrets/app-config",
+            "https://kv-demo.vault.azure.net/secrets/app-config/",
+            "https://kv-demo.vault.azure.net/secrets/secrets",
+            "https://kv-demo.vault.azure.net/keys/app-config/0123abcd",
+            "app-config",
+        ] {
+            let body = format!(r#"{{"id":"{id}","value":"x"}}"#);
+            assert_eq!(
+                provider(vec![ok(&body)]).get(&secret_ref("kv-demo", "app-config")),
+                Err(VaultError::Parse),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
     fn get_reports_a_parse_error_when_value_or_id_is_missing() {
         let no_value = provider(vec![ok(r#"{"id":"https://kv/secrets/n/v1"}"#)]);
         assert_eq!(no_value.get(&secret_ref("kv", "n")), Err(VaultError::Parse));
@@ -451,6 +665,100 @@ mod tests {
             .get(&secret_ref("kv", "n"))
             .unwrap_err();
         assert!(!err.to_string().contains("hunter2"));
+    }
+
+    // --- output encoding ---
+
+    #[test]
+    fn stdout_that_is_not_valid_utf8_maps_to_parse_instead_of_being_lossily_replaced() {
+        // A lossy decode would turn the invalid byte into U+FFFD and return a
+        // silently corrupted secret value.
+        let mut stdout = br#"{"id":"https://kv.vault.azure.net/secrets/n/v1","value":"pa"#.to_vec();
+        stdout.push(0xFF);
+        stdout.extend_from_slice(br#"ss"}"#);
+        let p = provider(vec![Ok(CmdOutput {
+            status_ok: true,
+            stdout,
+            stderr: String::new(),
+        })]);
+
+        assert_eq!(p.get(&secret_ref("kv", "n")), Err(VaultError::Parse));
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn the_system_runner_forces_utf8_output_for_the_child_process() {
+        let (program, args) = echo_env_command("PYTHONIOENCODING");
+
+        let output = SystemRunner::default().run(program, &args).expect("run");
+
+        assert!(output.status_ok);
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "utf-8");
+    }
+
+    // --- timeout ---
+
+    #[test]
+    fn a_command_that_timed_out_maps_to_the_timeout_error() {
+        let timed_out = || Err(io::Error::new(io::ErrorKind::TimedOut, "deadline exceeded"));
+        assert_eq!(provider(vec![timed_out()]).whoami(), Err(VaultError::Timeout));
+        assert_eq!(provider(vec![timed_out()]).list("kv"), Err(VaultError::Timeout));
+        assert_eq!(
+            provider(vec![timed_out()]).get(&secret_ref("kv", "n")),
+            Err(VaultError::Timeout)
+        );
+    }
+
+    #[test]
+    fn the_default_system_runner_bounds_every_invocation_to_sixty_seconds() {
+        assert_eq!(AZ_TIMEOUT, Duration::from_secs(60));
+        assert_eq!(SystemRunner::default().timeout, AZ_TIMEOUT);
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn the_system_runner_kills_a_command_that_outlives_its_timeout() {
+        let runner = SystemRunner::new(Duration::from_millis(300));
+        let (program, args) = sleep_command();
+        let started = std::time::Instant::now();
+
+        let result = runner.run(program, &args);
+
+        let err = result.expect_err("the command should have been cut off");
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "returned after {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn the_system_runner_returns_the_output_of_a_command_that_finishes_in_time() {
+        let runner = SystemRunner::new(Duration::from_secs(30));
+        let (program, args) = echo_command("hello");
+
+        let output = runner.run(program, &args).expect("run");
+
+        assert!(output.status_ok);
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn the_system_runner_drains_output_larger_than_a_pipe_buffer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("big.txt");
+        let payload = "0123456789abcdef".repeat(32 * 1024);
+        std::fs::write(&path, &payload).expect("write fixture");
+        let runner = SystemRunner::new(Duration::from_secs(30));
+        let (program, args) = print_file_command(&path);
+
+        let output = runner.run(program, &args).expect("run");
+
+        assert!(output.status_ok);
+        assert_eq!(output.stdout.len(), payload.len());
     }
 
     // --- error mapping ---
@@ -498,6 +806,55 @@ mod tests {
             }
             other => panic!("expected a Cli error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_leading_warning_line_does_not_replace_the_error_line_in_the_cli_summary() {
+        let p = provider(vec![fail(
+            "WARNING: a minor notice
+ERROR: the real failure
+ERROR: a later failure
+",
+        )]);
+        match p.list("kv") {
+            Err(VaultError::Cli(summary)) => assert_eq!(summary, "the real failure"),
+            other => panic!("expected a Cli error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn without_any_error_line_the_summary_falls_back_to_the_first_non_empty_line() {
+        let p = provider(vec![fail("
+  WARNING: only a warning here
+second line
+")]);
+        match p.list("kv") {
+            Err(VaultError::Cli(summary)) => assert_eq!(summary, "WARNING: only a warning here"),
+            other => panic!("expected a Cli error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_warning_that_mentions_a_sign_in_hint_does_not_misclassify_a_failure() {
+        let p = provider(vec![fail(
+            "WARNING: Please run 'az upgrade' to update the CLI.
+ERROR: something unexpected happened
+",
+        )]);
+        match p.list("kv") {
+            Err(VaultError::Cli(summary)) => assert_eq!(summary, "something unexpected happened"),
+            other => panic!("expected a Cli error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_error_line_after_a_warning_is_still_classified_by_its_own_text() {
+        let p = provider(vec![fail(
+            "WARNING: noise
+ERROR: (Forbidden) The user does not have secrets get permission.
+",
+        )]);
+        assert_eq!(p.list("kv"), Err(VaultError::Forbidden));
     }
 
     #[test]

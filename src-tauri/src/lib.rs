@@ -45,8 +45,15 @@ pub fn run() {
         // the app appears to stop opening until it is killed by hand.
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) && window.label() == "main" {
+                // No push exists in this phase, so nothing local is worth keeping.
+                vault::commands::cleanup_workspace(window.app_handle());
                 window.app_handle().exit(0);
             }
+        })
+        // Startup cleanup also covers a crash, which skips the exit hook above.
+        .setup(|app| {
+            vault::commands::cleanup_workspace(app.handle());
+            Ok(())
         })
         .manage(StartupState(Mutex::new(initial_payload)))
         .invoke_handler(tauri::generate_handler![
@@ -57,6 +64,10 @@ pub fn run() {
             shell_integration::install_context_menu,
             shell_integration::uninstall_context_menu,
             shell_integration::is_context_menu_installed,
+            vault::commands::vault_status,
+            vault::commands::vault_list,
+            vault::commands::vault_pull,
+            vault::commands::vault_clean,
         ])
         .run(tauri::generate_context!())
         .expect("error while running json-scout");

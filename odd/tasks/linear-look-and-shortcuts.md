@@ -27,6 +27,7 @@ Artifacts in English. No AI attribution in commits (user rule). Conventional com
 - [x] T1 Design tokens + restyle main.css (Linear-like; route: delegated writer)
 - [x] T2 CodeMirror theme/highlight from shared palette (route: delegated writer, same as T1)
 - [x] T3 Toolbar/markup polish, inline styles to CSS (route: delegated writer, same as T1)
+- [ ] T5 Motion layer: purposeful, minimal dynamics (after T4; route: delegated writer). Scope: sliding active-tab indicator; animated panel collapse width (no snap); press/hover micro-interactions; brief accent flash on the editor after Format/Minify/Repair; stats tiles fade-in stagger and histogram bars growing; blurred glass dropdown/toasts; soft top accent glow. All gated by prefers-reduced-motion. Optional follow-up (needs user OK): Ctrl+K command palette.
 - [ ] T4 Shortcuts: shortcuts.js RED→GREEN, wire main.js (+ expose collapse toggles), tooltips (route: delegated writer, after T1-3: shares toolbar.js)
 
 ## Acceptance

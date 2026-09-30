@@ -13,8 +13,9 @@
       <main class="workspace">
         <aside id="sidebar" class="sidebar">
           <div class="sidebar__header">
-            <span>Files</span>
-            <button id="sidebar-collapse" class="icon-btn" title="Collapse sidebar">&laquo;</button>
+            <span class="sidebar__title">Files</span>
+            <span class="rail-label">Files</span>
+            <button id="sidebar-collapse" class="icon-btn" title="Collapse Files" aria-label="Toggle Files panel" aria-expanded="true"><svg class="chevron" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><polyline points="15 6 9 12 15 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div id="sidebar-list" class="sidebar__list"></div>
         </aside>
@@ -39,7 +40,8 @@
 
         <aside id="right-panel" class="right-panel">
           <div class="right-panel__header">
-            <button id="right-panel-collapse" class="icon-btn" title="Collapse panel">&raquo;</button>
+            <span class="rail-label">Tools</span>
+            <button id="right-panel-collapse" class="icon-btn" title="Collapse Tools" aria-label="Toggle Tools panel" aria-expanded="true"><svg class="chevron" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><polyline points="9 6 15 12 9 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <nav class="tabs" id="right-panel-tabs">
             <button class="tab active" data-tab="tree">Tree</button>

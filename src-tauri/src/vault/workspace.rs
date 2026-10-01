@@ -8,20 +8,28 @@
 //! {root}/{vault}/{name}.meta.json             { baseVersion, pulledAt, format }
 //! ```
 //!
+//! The metadata file is written last and doubles as the commit marker: a
+//! secret without readable metadata counts as not pulled.
+//!
 //! Secret names cannot contain a dot, so `.base` and `*.meta.json` can never
 //! collide with a secret's own files. Every name is validated before a path
 //! is built, which also rules out path traversal.
 
 use super::domain::{validate_name, SecretValue, VaultError};
 use super::json_text;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Folder name the workspace root must have. [`Workspace::clean`] refuses to
+/// remove a whole root with any other name.
+pub const ROOT_DIR_NAME: &str = "vault-sync";
 
 const BASE_DIR: &str = ".base";
 
 /// How a secret value is stored locally.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
     Json,
@@ -106,6 +114,13 @@ impl Workspace {
     /// Store a freshly pulled secret: working copy, base copy and metadata.
     /// Any previous copy, including one stored in the other format, is
     /// replaced.
+    ///
+    /// The three files cannot be written atomically as a set, so the metadata
+    /// is the commit marker: the previous one is removed first, the base copy
+    /// and the working copy follow, and the new metadata is written last. A
+    /// pull that stops anywhere in between leaves no metadata, which
+    /// [`Workspace::local_state`] reads as "not pulled", so the files of an
+    /// interrupted pull are never trusted.
     pub fn write_pull(
         &self,
         vault: &str,
@@ -121,15 +136,15 @@ impl Workspace {
         let base = base_path(&vault_dir, name, format);
         let meta = meta_path(&vault_dir, name);
 
+        remove_if_present(&meta)?;
         fs::create_dir_all(vault_dir.join(BASE_DIR))?;
-        write_atomic(&base, &normalised.text)?;
-        write_atomic(&working, &normalised.text)?;
-        write_atomic(&meta, &meta_document(&value.version, format))?;
-
         for other in Format::ALL.into_iter().filter(|f| *f != format) {
             remove_if_present(&working_path(&vault_dir, name, other))?;
             remove_if_present(&base_path(&vault_dir, name, other))?;
         }
+        write_atomic(&base, &normalised.text)?;
+        write_atomic(&working, &normalised.text)?;
+        write_atomic(&meta, &meta_document(&value.version, format))?;
 
         Ok(Pulled {
             path: working,
@@ -137,32 +152,43 @@ impl Workspace {
         })
     }
 
-    /// Compare a secret's working copy with the base it was pulled from.
+    /// Compare a secret's working copy with the base it was pulled from. A
+    /// secret without readable metadata was never (fully) pulled, whatever
+    /// files lie around.
     pub fn local_state(&self, vault: &str, name: &str) -> Result<LocalState, VaultError> {
         let vault_dir = self.vault_dir(vault)?;
         validate_name(name)?;
 
-        for format in Format::ALL {
-            let Some(base) = read_if_present(&base_path(&vault_dir, name, format))? else {
-                continue;
-            };
-            return Ok(
-                match read_if_present(&working_path(&vault_dir, name, format))? {
-                    Some(working) if working == base => LocalState::Clean,
-                    Some(_) => LocalState::Modified,
-                    None => LocalState::Remote,
-                },
-            );
-        }
-        Ok(LocalState::Remote)
+        let Some(meta) = read_meta(&vault_dir, name) else {
+            return Ok(LocalState::Remote);
+        };
+        let Some(base) = read_if_present(&base_path(&vault_dir, name, meta.format))? else {
+            return Ok(LocalState::Remote);
+        };
+        Ok(
+            match read_if_present(&working_path(&vault_dir, name, meta.format))? {
+                Some(working) if working == base => LocalState::Clean,
+                Some(_) => LocalState::Modified,
+                None => LocalState::Remote,
+            },
+        )
     }
 
     /// Remove one vault's folder, or the whole workspace when `vault` is
-    /// `None`. A missing folder is not an error.
+    /// `None`. A missing folder is not an error. Removing the whole root is
+    /// refused unless its last path component is [`ROOT_DIR_NAME`], so a wrong
+    /// root can never turn this into "delete an arbitrary folder".
     pub fn clean(&self, vault: Option<&str>) -> Result<(), VaultError> {
         let target = match vault {
             Some(vault) => self.vault_dir(vault)?,
-            None => self.root.clone(),
+            None => {
+                if self.root.file_name() != Some(OsStr::new(ROOT_DIR_NAME)) {
+                    return Err(VaultError::Internal(format!(
+                        "refusing to remove a folder that is not named {ROOT_DIR_NAME}"
+                    )));
+                }
+                self.root.clone()
+            }
         };
         match fs::remove_dir_all(&target) {
             Ok(()) => Ok(()),
@@ -204,6 +230,21 @@ fn meta_document(version: &str, format: Format) -> String {
     let mut text = document.to_string();
     text.push('\n');
     text
+}
+
+/// The parsed `<name>.meta.json`, or `None` when it is missing, unreadable or
+/// incomplete.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Meta {
+    base_version: String,
+    format: Format,
+}
+
+fn read_meta(vault_dir: &Path, name: &str) -> Option<Meta> {
+    let bytes = fs::read(meta_path(vault_dir, name)).ok()?;
+    let meta: Meta = serde_json::from_slice(&bytes).ok()?;
+    (!meta.base_version.is_empty()).then_some(meta)
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<(), VaultError> {
@@ -465,6 +506,113 @@ mod tests {
         assert_eq!(ws.local_state("kv", "a/b"), Err(VaultError::InvalidName));
     }
 
+    #[test]
+    fn local_state_is_remote_when_the_metadata_is_missing_and_orphan_files_are_ignored() {
+        let (_dir, ws) = workspace();
+        let pulled = ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        fs::remove_file(ws.root().join("kv").join("cfg.meta.json")).unwrap();
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Remote);
+
+        // Edited orphans change nothing either: without a meta there was no pull.
+        fs::write(&pulled.path, "edited").unwrap();
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Remote);
+    }
+
+    #[test]
+    fn local_state_is_remote_when_the_metadata_is_unreadable_or_incomplete() {
+        let (_dir, ws) = workspace();
+        ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        let meta = ws.root().join("kv").join("cfg.meta.json");
+
+        for broken in [
+            "",
+            "not json",
+            "{}",
+            r#"{"baseVersion":"v1"}"#,
+            r#"{"format":"json"}"#,
+            r#"{"baseVersion":"","format":"json"}"#,
+            r#"{"baseVersion":"v1","format":"yaml"}"#,
+            r#"{"baseVersion":7,"format":"json"}"#,
+        ] {
+            fs::write(&meta, broken).unwrap();
+            assert_eq!(
+                ws.local_state("kv", "cfg").unwrap(),
+                LocalState::Remote,
+                "{broken:?}"
+            );
+        }
+
+        fs::remove_file(&meta).unwrap();
+        fs::create_dir(&meta).unwrap();
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Remote);
+    }
+
+    #[test]
+    fn local_state_follows_the_format_named_by_the_metadata_and_ignores_the_other_one() {
+        let (_dir, ws) = workspace();
+        ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        let vault_dir = ws.root().join("kv");
+        fs::write(vault_dir.join(".base").join("cfg.txt"), "orphan base").unwrap();
+        fs::write(vault_dir.join("cfg.txt"), "orphan working, different").unwrap();
+
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Clean);
+    }
+
+    // --- atomic pull ---
+
+    #[test]
+    fn a_pull_that_fails_before_the_metadata_leaves_the_secret_not_pulled() {
+        let (_dir, ws) = workspace();
+        let vault_dir = ws.root().join("kv");
+        // A directory where the working copy goes makes that step fail.
+        fs::create_dir_all(vault_dir.join("cfg.json")).unwrap();
+
+        let result = ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1"));
+
+        assert!(matches!(result, Err(VaultError::Io(_))), "{result:?}");
+        assert!(
+            vault_dir.join(".base").join("cfg.json").exists(),
+            "the base copy is written first"
+        );
+        assert!(
+            !vault_dir.join("cfg.meta.json").exists(),
+            "the metadata is the commit marker and is written last"
+        );
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Remote);
+    }
+
+    #[test]
+    fn a_failed_re_pull_invalidates_the_previous_pull_instead_of_mixing_old_and_new_files() {
+        let (_dir, ws) = workspace();
+        let first = ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        // Break the working copy path so the second pull fails after the base
+        // copy was already replaced.
+        fs::remove_file(&first.path).unwrap();
+        fs::create_dir(&first.path).unwrap();
+
+        let result = ws.write_pull("kv", "cfg", &secret(r#"{"a":2}"#, "v2"));
+
+        assert!(matches!(result, Err(VaultError::Io(_))), "{result:?}");
+        assert!(
+            !ws.root().join("kv").join("cfg.meta.json").exists(),
+            "the old metadata must not describe the new base copy"
+        );
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Remote);
+    }
+
+    #[test]
+    fn a_pull_removes_the_other_formats_files_before_it_commits() {
+        let (_dir, ws) = workspace();
+        ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        ws.write_pull("kv", "cfg", &secret("plain", "v2")).unwrap();
+
+        let vault_dir = ws.root().join("kv");
+        assert!(!vault_dir.join("cfg.json").exists());
+        assert!(!vault_dir.join(".base").join("cfg.json").exists());
+        let meta = fs::read_to_string(vault_dir.join("cfg.meta.json")).unwrap();
+        assert!(meta.contains("\"v2\"") && meta.contains("\"text\""), "{meta}");
+    }
+
     // --- clean ---
 
     #[test]
@@ -496,6 +644,43 @@ mod tests {
         let (_dir, ws) = workspace();
         assert_eq!(ws.clean(None), Ok(()));
         assert_eq!(ws.clean(Some("never-pulled")), Ok(()));
+    }
+
+    #[test]
+    fn clean_everything_refuses_a_root_whose_last_component_is_not_vault_sync() {
+        let dir = tempdir().expect("tempdir");
+        let precious = dir.path().join("precious");
+        fs::create_dir_all(&precious).unwrap();
+        fs::write(precious.join("keep.txt"), "do not delete").unwrap();
+
+        for root in [
+            dir.path().to_path_buf(),
+            precious.clone(),
+            dir.path().join("vault-sync-backup"),
+            dir.path().join("Vault-Sync-x"),
+            dir.path().join("vault-sync").join(".."),
+        ] {
+            let ws = Workspace::new(root.clone());
+            assert!(
+                matches!(ws.clean(None), Err(VaultError::Internal(_))),
+                "{root:?} must be refused"
+            );
+        }
+        assert_eq!(fs::read_to_string(precious.join("keep.txt")).unwrap(), "do not delete");
+    }
+
+    #[test]
+    fn clean_everything_still_removes_a_root_named_vault_sync_and_scoped_clean_is_unguarded() {
+        let dir = tempdir().expect("tempdir");
+        let ws = Workspace::new(dir.path().join("deep").join("vault-sync"));
+        ws.write_pull("one", "a", &secret("1", "v1")).unwrap();
+        ws.write_pull("two", "b", &secret("2", "v1")).unwrap();
+
+        ws.clean(Some("one")).unwrap();
+        assert!(ws.root().join("two").exists());
+        ws.clean(None).unwrap();
+        assert!(!ws.root().exists());
+        assert!(dir.path().join("deep").exists(), "only the root itself goes");
     }
 
     #[test]

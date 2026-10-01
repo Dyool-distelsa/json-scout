@@ -508,6 +508,12 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
         render();
         rowFocusTargets.get(name)?.focus();
       },
+      // The dialog has closed itself by now (see onClosed): the stale list goes.
+      onSignedOut: (err) => {
+        handleCallError(err);
+        render();
+        if (!authButton.hidden && !authButton.disabled) authButton.focus();
+      },
       // The secret is modified, so this asks before discarding the edits.
       onRepull: () => requestPull(state.items.find((entry) => entry.name === name) ?? item),
     });

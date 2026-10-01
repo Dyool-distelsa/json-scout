@@ -534,3 +534,57 @@ describe('push dialog: the secret changed after the preview', () => {
     expect(buttonByText('Push')).toBeUndefined();
   });
 });
+
+describe('push dialog: the Azure session ended', () => {
+  const signedOut = () => {
+    throw { kind: 'not_signed_in', message: 'raw' };
+  };
+
+  it('closes and hands over to the caller when a push finds the session gone', async () => {
+    const onSignedOut = vi.fn();
+    callbacks.onSignedOut = onSignedOut;
+    open();
+    fake.on('vault_push', signedOut);
+
+    buttonByText('Push').click();
+    await settle();
+
+    expect(dialog()).toBeNull();
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+    expect(onSignedOut.mock.calls[0][0].kind).toBe('not_signed_in');
+    expect(callbacks.onPushed).not.toHaveBeenCalled();
+    expect(fake.callsOf('vault_push')).toHaveLength(1);
+  });
+
+  it('closes and hands over when Review again finds the session gone', async () => {
+    const onSignedOut = vi.fn();
+    callbacks.onSignedOut = onSignedOut;
+    open();
+    fake.on('vault_push', () => {
+      throw { kind: 'preview_required' };
+    });
+    buttonByText('Push').click();
+    await settle();
+    fake.on('vault_push_preview', signedOut);
+
+    buttonByText('Review again').click();
+    await settle();
+
+    expect(dialog()).toBeNull();
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands over after the dialog has closed, so the caller sees a settled page', async () => {
+    let openWhenCalled;
+    callbacks.onSignedOut = () => {
+      openWhenCalled = dialog() !== null;
+    };
+    open();
+    fake.on('vault_push', signedOut);
+
+    buttonByText('Push').click();
+    await settle();
+
+    expect(openWhenCalled).toBe(false);
+  });
+});

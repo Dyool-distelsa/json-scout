@@ -27,16 +27,40 @@ pub fn content_hash(text: &str) -> String {
 
 type Key = (String, String);
 
+#[derive(Clone)]
 struct Entry {
     content_hash: String,
     base_version: String,
+    remote_version: String,
     expires_at: Instant,
 }
 
 /// What a still-valid preview recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Previewed {
+    /// The version the working copy was pulled from.
     pub base_version: String,
+    /// The version the vault held when the user looked at the preview. An
+    /// overwrite is only allowed over exactly this version.
+    pub remote_version: String,
+}
+
+/// A preview taken out of the gate by a push in progress. While it is held
+/// no other push can use the same preview. Dropping it means the push
+/// went through (or the preview is dead); [`PreviewGate::restore`] puts it
+/// back so the user can retry the same confirmed push.
+pub struct Taken {
+    key: Key,
+    entry: Entry,
+}
+
+impl Taken {
+    pub fn previewed(&self) -> Previewed {
+        Previewed {
+            base_version: self.entry.base_version.clone(),
+            remote_version: self.entry.remote_version.clone(),
+        }
+    }
 }
 
 struct Inner {
@@ -84,7 +108,14 @@ impl PreviewGate {
 
     /// Record a preview, replacing any earlier one for the same secret and
     /// dropping every preview that has already expired.
-    pub fn remember(&self, vault: &str, name: &str, content_hash: &str, base_version: &str) {
+    pub fn remember(
+        &self,
+        vault: &str,
+        name: &str,
+        content_hash: &str,
+        base_version: &str,
+        remote_version: &str,
+    ) {
         let now = (self.inner.clock)();
         let mut entries = self.entries();
         entries.retain(|_, entry| entry.expires_at > now);
@@ -93,26 +124,49 @@ impl PreviewGate {
             Entry {
                 content_hash: content_hash.to_string(),
                 base_version: base_version.to_string(),
+                remote_version: remote_version.to_string(),
                 expires_at: now + self.inner.ttl,
             },
         );
     }
 
-    /// The preview recorded for this secret, if it is unexpired and was made
-    /// for exactly `content_hash`.
+    /// Look at the preview recorded for this secret without using it, if it
+    /// is unexpired and was made for exactly `content_hash`.
+    #[cfg(test)]
     pub fn check(&self, vault: &str, name: &str, content_hash: &str) -> Option<Previewed> {
         let now = (self.inner.clock)();
         let entries = self.entries();
         let entry = entries.get(&(vault.to_string(), name.to_string()))?;
         (entry.expires_at > now && entry.content_hash == content_hash).then(|| Previewed {
             base_version: entry.base_version.clone(),
+            remote_version: entry.remote_version.clone(),
         })
     }
 
-    /// Forget the preview of this secret (after a successful push).
-    pub fn consume(&self, vault: &str, name: &str) {
-        self.entries()
-            .remove(&(vault.to_string(), name.to_string()));
+    /// Take the preview of this secret out of the gate, if it is unexpired
+    /// and was made for exactly `content_hash`. Checking and removing happen
+    /// under one lock, so of two pushes racing with the same hash only one
+    /// gets the preview. A mismatching hash leaves the preview in place.
+    pub fn take(&self, vault: &str, name: &str, content_hash: &str) -> Option<Taken> {
+        let now = (self.inner.clock)();
+        let mut entries = self.entries();
+        let key = (vault.to_string(), name.to_string());
+        let usable = entries
+            .get(&key)
+            .is_some_and(|entry| entry.expires_at > now && entry.content_hash == content_hash);
+        if !usable {
+            return None;
+        }
+        let entry = entries.remove(&key)?;
+        Some(Taken { key, entry })
+    }
+
+    /// Put a taken preview back after a push that did not write anything, so
+    /// the same confirmed hash can be retried. A newer preview of the same
+    /// secret made in the meantime wins, and a preview that has expired in
+    /// the meantime stays expired.
+    pub fn restore(&self, taken: Taken) {
+        self.entries().entry(taken.key).or_insert(taken.entry);
     }
 
     #[cfg(test)]
@@ -160,12 +214,13 @@ mod tests {
     #[test]
     fn a_remembered_preview_matches_the_same_secret_and_hash_and_returns_its_base_version() {
         let (gate, _now) = gate();
-        gate.remember("kv", "cfg", "hash-1", "v7");
+        gate.remember("kv", "cfg", "hash-1", "v7", "r1");
 
         assert_eq!(
             gate.check("kv", "cfg", "hash-1"),
             Some(Previewed {
-                base_version: "v7".into()
+                base_version: "v7".into(),
+                remote_version: "r1".into(),
             })
         );
     }
@@ -173,7 +228,7 @@ mod tests {
     #[test]
     fn a_different_hash_vault_or_name_does_not_match() {
         let (gate, _now) = gate();
-        gate.remember("kv", "cfg", "hash-1", "v7");
+        gate.remember("kv", "cfg", "hash-1", "v7", "r1");
 
         assert_eq!(gate.check("kv", "cfg", "hash-2"), None);
         assert_eq!(gate.check("kv", "cfg", ""), None);
@@ -190,7 +245,7 @@ mod tests {
     #[test]
     fn a_preview_expires_exactly_at_the_ttl() {
         let (gate, now) = gate();
-        gate.remember("kv", "cfg", "hash-1", "v1");
+        gate.remember("kv", "cfg", "hash-1", "v1", "r1");
 
         advance(&now, PREVIEW_TTL - Duration::from_secs(1));
         assert!(gate.check("kv", "cfg", "hash-1").is_some());
@@ -202,16 +257,17 @@ mod tests {
     #[test]
     fn a_newer_preview_of_the_same_secret_replaces_the_older_one_and_restarts_the_clock() {
         let (gate, now) = gate();
-        gate.remember("kv", "cfg", "old", "v1");
+        gate.remember("kv", "cfg", "old", "v1", "r1");
         advance(&now, Duration::from_secs(200));
-        gate.remember("kv", "cfg", "new", "v2");
+        gate.remember("kv", "cfg", "new", "v2", "r1");
 
         assert_eq!(gate.check("kv", "cfg", "old"), None);
         advance(&now, Duration::from_secs(200));
         assert_eq!(
             gate.check("kv", "cfg", "new"),
             Some(Previewed {
-                base_version: "v2".into()
+                base_version: "v2".into(),
+                remote_version: "r1".into(),
             })
         );
     }
@@ -219,31 +275,31 @@ mod tests {
     #[test]
     fn previews_of_different_secrets_are_independent() {
         let (gate, _now) = gate();
-        gate.remember("kv", "a", "ha", "v1");
-        gate.remember("kv", "b", "hb", "v2");
-        gate.consume("kv", "a");
+        gate.remember("kv", "a", "ha", "v1", "r1");
+        gate.remember("kv", "b", "hb", "v2", "r1");
+        drop(gate.take("kv", "a", "ha"));
 
         assert_eq!(gate.check("kv", "a", "ha"), None);
         assert!(gate.check("kv", "b", "hb").is_some());
     }
 
     #[test]
-    fn consume_forgets_the_preview() {
+    fn taking_a_preview_removes_it() {
         let (gate, _now) = gate();
-        gate.remember("kv", "cfg", "hash-1", "v1");
-        gate.consume("kv", "cfg");
+        gate.remember("kv", "cfg", "hash-1", "v1", "r1");
+        drop(gate.take("kv", "cfg", "hash-1"));
         assert_eq!(gate.check("kv", "cfg", "hash-1"), None);
         assert_eq!(gate.len(), 0);
-        gate.consume("kv", "cfg"); // forgetting twice is harmless
+        assert!(gate.take("kv", "cfg", "hash-1").is_none(), "taking twice is harmless");
     }
 
     #[test]
     fn remembering_drops_the_previews_that_have_already_expired() {
         let (gate, now) = gate();
-        gate.remember("kv", "a", "ha", "v1");
-        gate.remember("kv", "b", "hb", "v1");
+        gate.remember("kv", "a", "ha", "v1", "r1");
+        gate.remember("kv", "b", "hb", "v1", "r1");
         advance(&now, PREVIEW_TTL);
-        gate.remember("kv", "c", "hc", "v1");
+        gate.remember("kv", "c", "hc", "v1", "r1");
 
         assert_eq!(gate.len(), 1, "only the fresh preview is kept");
         assert!(gate.check("kv", "c", "hc").is_some());
@@ -253,16 +309,16 @@ mod tests {
     fn clones_share_the_same_previews() {
         let (gate, _now) = gate();
         let other = gate.clone();
-        gate.remember("kv", "cfg", "hash-1", "v1");
+        gate.remember("kv", "cfg", "hash-1", "v1", "r1");
         assert!(other.check("kv", "cfg", "hash-1").is_some());
-        other.consume("kv", "cfg");
+        drop(other.take("kv", "cfg", "hash-1"));
         assert_eq!(gate.check("kv", "cfg", "hash-1"), None);
     }
 
     #[test]
     fn the_default_gate_uses_the_real_clock_and_the_five_minute_ttl() {
         let gate = PreviewGate::default();
-        gate.remember("kv", "cfg", "hash-1", "v1");
+        gate.remember("kv", "cfg", "hash-1", "v1", "r1");
         assert!(gate.check("kv", "cfg", "hash-1").is_some());
     }
 
@@ -276,7 +332,89 @@ mod tests {
         })
         .join();
 
-        gate.remember("kv", "cfg", "hash-1", "v1");
+        gate.remember("kv", "cfg", "hash-1", "v1", "r1");
         assert!(gate.check("kv", "cfg", "hash-1").is_some());
+    }
+
+    // --- take / restore ---
+
+    #[test]
+    fn take_returns_the_recorded_versions_and_removes_the_preview() {
+        let (gate, _now) = gate();
+        gate.remember("kv", "cfg", "hash-1", "v1", "v2");
+
+        let taken = gate.take("kv", "cfg", "hash-1").expect("taken");
+
+        assert_eq!(
+            taken.previewed(),
+            Previewed {
+                base_version: "v1".into(),
+                remote_version: "v2".into(),
+            }
+        );
+        assert_eq!(gate.len(), 0);
+        assert!(gate.take("kv", "cfg", "hash-1").is_none(), "only one taker gets it");
+    }
+
+    #[test]
+    fn take_with_the_wrong_hash_or_after_expiry_returns_nothing_and_keeps_the_preview() {
+        let (gate, now) = gate();
+        gate.remember("kv", "cfg", "hash-1", "v1", "v1");
+
+        assert!(gate.take("kv", "cfg", "other").is_none());
+        assert!(gate.take("kv", "other", "hash-1").is_none());
+        assert_eq!(gate.len(), 1, "a refused take keeps the preview");
+
+        advance(&now, PREVIEW_TTL);
+        assert!(gate.take("kv", "cfg", "hash-1").is_none());
+    }
+
+    #[test]
+    fn a_restored_preview_can_be_taken_again() {
+        let (gate, _now) = gate();
+        gate.remember("kv", "cfg", "hash-1", "v1", "v2");
+
+        let taken = gate.take("kv", "cfg", "hash-1").unwrap();
+        assert_eq!(gate.len(), 0);
+        gate.restore(taken);
+
+        let again = gate.take("kv", "cfg", "hash-1").expect("retry works");
+        assert_eq!(again.previewed().remote_version, "v2");
+    }
+
+    #[test]
+    fn restore_does_not_replace_a_newer_preview_and_does_not_extend_the_expiry() {
+        let (gate, now) = gate();
+        gate.remember("kv", "cfg", "old", "v1", "v1");
+        let taken = gate.take("kv", "cfg", "old").unwrap();
+        gate.remember("kv", "cfg", "new", "v1", "v3");
+
+        gate.restore(taken);
+
+        assert!(gate.check("kv", "cfg", "old").is_none(), "the newer preview wins");
+        assert_eq!(gate.check("kv", "cfg", "new").unwrap().remote_version, "v3");
+
+        gate.remember("kv", "late", "h", "v1", "v1");
+        let taken = gate.take("kv", "late", "h").unwrap();
+        advance(&now, PREVIEW_TTL);
+        gate.restore(taken);
+        assert!(gate.take("kv", "late", "h").is_none(), "an expired preview stays expired");
+    }
+
+    #[test]
+    fn exactly_one_of_many_concurrent_takers_gets_the_preview() {
+        let gate = PreviewGate::default();
+        gate.remember("kv", "cfg", "hash-1", "v1", "v1");
+        let winners = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| gate.take("kv", "cfg", "hash-1").is_some()))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .filter(|won| *won)
+                .count()
+        });
+        assert_eq!(winners, 1);
     }
 }

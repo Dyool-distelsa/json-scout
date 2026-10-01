@@ -158,7 +158,8 @@ impl<P: SecretProvider> VaultService<P> {
         if prepared.changed {
             // A conflicting preview is remembered too: "overwrite anyway"
             // goes through the same gate.
-            self.gate.remember(vault, name, &content_hash, &base_version);
+            self.gate
+                .remember(vault, name, &content_hash, &base_version, &remote.version);
         }
 
         Ok(PushPreview {
@@ -196,24 +197,50 @@ impl<P: SecretProvider> VaultService<P> {
         if content_hash(&prepared.bytes) != confirmed_hash {
             return Err(VaultError::PreviewRequired);
         }
-        let previewed = self
+        // Take the preview out of the gate before anything slow happens, so a
+        // second push with the same hash cannot also reach `set`.
+        let taken = self
             .gate
-            .check(vault, name, confirmed_hash)
+            .take(vault, name, confirmed_hash)
             .ok_or(VaultError::PreviewRequired)?;
+        let previewed = taken.previewed();
         let base_version = &prepared.pulled.base_version;
         if previewed.base_version != *base_version {
-            // The secret was pulled again since the preview.
+            // The secret was pulled again since the preview, so that preview
+            // describes a base that no longer exists: it stays consumed.
             return Err(VaultError::PreviewRequired);
         }
 
         // Look again right before writing: the preview may be minutes old.
-        let remote = self.provider.get(&reference)?;
-        if remote.version != *base_version && !overwrite {
+        let remote = match self.provider.get(&reference) {
+            Ok(remote) => remote,
+            Err(err) => {
+                self.gate.restore(taken);
+                return Err(err);
+            }
+        };
+        // Without `overwrite` the vault must still hold the version the
+        // working copy came from. With it, the vault must hold exactly the
+        // version the user saw in the preview: a version nobody reviewed is
+        // never overwritten.
+        let expected = if overwrite {
+            &previewed.remote_version
+        } else {
+            base_version
+        };
+        if remote.version != *expected {
+            self.gate.restore(taken);
             return Err(VaultError::Conflict);
         }
 
-        let stored = self.provider.set(&reference, &prepared.bytes)?;
-        self.gate.consume(vault, name);
+        let stored = match self.provider.set(&reference, &prepared.bytes) {
+            Ok(stored) => stored,
+            Err(err) => {
+                // Nothing was written, so the same confirmed push can be retried.
+                self.gate.restore(taken);
+                return Err(err);
+            }
+        };
         self.workspace
             .record_push(vault, name, &prepared.pulled.working_text, &stored.version)
             .map_err(|err| {
@@ -1115,7 +1142,7 @@ mod tests {
     }
 
     #[test]
-    fn push_refuses_a_conflict_unless_overwrite_is_set_and_keeps_the_preview_for_the_retry() {
+    fn push_refuses_a_conflict_without_overwrite_and_keeps_the_preview() {
         let (_dir, svc, preview) = previewed_service(EDITED);
         svc.provider.set_remote("cfg", r#"{"a":1,"b":2,"c":3}"#, "v2");
 
@@ -1125,12 +1152,53 @@ mod tests {
         );
         assert!(svc.provider.sets().is_empty());
         assert_eq!(svc.gate.len(), 1);
+    }
 
-        let result = svc.push("kv", "cfg", &preview.content_hash, true).expect("overwrite");
+    #[test]
+    fn overwrite_is_refused_when_the_remote_changed_after_the_preview() {
+        let (_dir, svc, preview) = previewed_service(EDITED);
+        // Somebody pushed v2 after the user reviewed a preview made at v1: the
+        // user never saw v2, so it must not be overwritten.
+        svc.provider.set_remote("cfg", r#"{"a":1,"b":2,"c":3}"#, "v2");
 
-        assert_eq!(result.new_version, "v-new");
+        assert_eq!(
+            svc.push("kv", "cfg", &preview.content_hash, true),
+            Err(VaultError::Conflict)
+        );
+        assert!(svc.provider.sets().is_empty());
+        assert_eq!(svc.gate.len(), 1);
+
+        // After previewing again the user has seen v2 and can overwrite it.
+        let again = svc.push_preview("kv", "cfg").unwrap();
+        assert!(again.remote.conflict);
+        assert_eq!(again.remote.current_version, "v2");
+        svc.push("kv", "cfg", &again.content_hash, true).expect("overwrite what was seen");
         assert_eq!(svc.provider.sets().len(), 1);
         assert_eq!(svc.workspace.read_pulled("kv", "cfg").unwrap().base_version, "v-new");
+    }
+
+    #[test]
+    fn overwrite_is_refused_when_the_remote_changed_again_after_a_conflicting_preview() {
+        let (_dir, svc) = edited_service(EDITED);
+        svc.provider.set_remote("cfg", r#"{"a":9}"#, "v2");
+        let preview = svc.push_preview("kv", "cfg").unwrap();
+        assert_eq!(preview.remote.current_version, "v2");
+        svc.provider.set_remote("cfg", r#"{"a":10}"#, "v3");
+
+        assert_eq!(
+            svc.push("kv", "cfg", &preview.content_hash, true),
+            Err(VaultError::Conflict)
+        );
+        assert!(svc.provider.sets().is_empty());
+    }
+
+    #[test]
+    fn overwrite_without_any_remote_change_pushes_normally() {
+        let (_dir, svc, preview) = previewed_service(EDITED);
+
+        svc.push("kv", "cfg", &preview.content_hash, true).expect("push");
+
+        assert_eq!(svc.provider.sets().len(), 1);
     }
 
     #[test]
@@ -1160,6 +1228,75 @@ mod tests {
         assert_eq!(svc.workspace.local_state("kv", "cfg").unwrap(), LocalState::Modified);
         assert_eq!(svc.workspace.read_pulled("kv", "cfg").unwrap().base_version, "v1");
         assert_eq!(svc.gate.len(), 1, "the user can retry the same confirmed push");
+    }
+
+    #[test]
+    fn a_failed_write_can_be_retried_with_the_same_hash() {
+        let (_dir, mut svc, preview) = previewed_service(EDITED);
+        svc.provider.set_result = Err(VaultError::Forbidden);
+        assert_eq!(
+            svc.push("kv", "cfg", &preview.content_hash, false),
+            Err(VaultError::Forbidden)
+        );
+
+        svc.provider.set_result = Ok(SecretValue {
+            value: String::new(),
+            version: "v-new".into(),
+            updated: None,
+        });
+        let result = svc.push("kv", "cfg", &preview.content_hash, false).expect("retry");
+
+        assert_eq!(result.new_version, "v-new");
+        assert_eq!(svc.provider.sets().len(), 2, "one failed attempt and one success");
+    }
+
+    #[test]
+    fn a_conflict_refusal_keeps_the_preview_for_a_retry_with_the_same_hash() {
+        let (_dir, svc, preview) = previewed_service(EDITED);
+        svc.provider.set_remote("cfg", r#"{"a":9}"#, "v2");
+        assert_eq!(
+            svc.push("kv", "cfg", &preview.content_hash, false),
+            Err(VaultError::Conflict)
+        );
+
+        // The conflict was resolved on the vault side (it is back at v1).
+        svc.provider.set_remote("cfg", PULLED, "v1");
+        svc.push("kv", "cfg", &preview.content_hash, false).expect("retry");
+    }
+
+    #[test]
+    fn two_pushes_racing_with_the_same_hash_write_once() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+
+        let (_dir, mut svc, preview) = previewed_service(EDITED);
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let entered_tx = Mutex::new(entered_tx);
+        let release_rx = Mutex::new(release_rx);
+        let first = AtomicBool::new(true);
+        // The first `set` stays in flight until the test lets it finish.
+        svc.provider.on_set = Some(Box::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                entered_tx.lock().unwrap().send(()).unwrap();
+                release_rx.lock().unwrap().recv().unwrap();
+            }
+        }));
+
+        let (first_result, second_result) = std::thread::scope(|scope| {
+            let svc = &svc;
+            let hash = preview.content_hash.as_str();
+            let first = scope.spawn(move || svc.push("kv", "cfg", hash, false));
+            entered_rx.recv().expect("the first push reached set");
+            // The second push arrives while the first is still writing.
+            let second = svc.push("kv", "cfg", hash, false);
+            release_tx.send(()).unwrap();
+            (first.join().unwrap(), second)
+        });
+
+        assert!(first_result.is_ok(), "{first_result:?}");
+        assert_eq!(second_result, Err(VaultError::PreviewRequired));
+        assert_eq!(svc.provider.sets().len(), 1, "set ran exactly once");
     }
 
     #[test]

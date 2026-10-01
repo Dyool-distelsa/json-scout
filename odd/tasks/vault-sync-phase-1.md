@@ -185,7 +185,28 @@ Branch: `feat/vault-sync` from `main` (09ee339). First reviewed boundary: 09ee33
 - T5 goes on the stacked branch `feat/vault-sync-ui`, created from
   `feat/vault-sync`.
 
+- T5 was committed in `79baef1`. The user granted its review, which was
+  approved with authority burned (`review-408e4c513d01e7e9`).
+- A whole-slice review of PR1 (`09ee339..3dfb6b6`, 2,466 lines) ran on the
+  stop hook's request. The user granted it and it was approved with authority
+  burned (`review-31f680677fc84492`).
+
+## Follow-ups from the T5 and PR1 reviews (non-blocking)
+- The overwrite guards in the panel are untested: the confirmation gate for a
+  `modified` row, re-listing a `clean` row before pull, and the busy guard. So
+  is the load-failure branch. A jsdom test with a call-recording `invoke`
+  would cover them, but that needs a dev dependency the repo does not have yet.
+- When stderr has no `ERROR:` line, `map_failure` classifies the whole text.
+  `WARNING: Please run 'az upgrade'` then matches "please run" and reports
+  `not_signed_in`. Drop the "please run" needle, or exclude `WARNING:` lines
+  in the fallback.
+- `collect` drains output only until the original deadline. A child that
+  exits just before the 60s deadline can be reported as `timeout`. Add a
+  short grace period after exit.
+- Startup cleanup can wipe a running instance's workspace. This is already
+  tracked as a T6 check.
+
 ## Next step
-Review the T5 commit, then T6. T6 is the user's manual smoke check and also
+T6. T6 is the user's manual smoke check and also
 covers the tab-bar fit at 320px and 260px in both themes, plus pulling a
 `text`-format secret.

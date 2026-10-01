@@ -107,6 +107,29 @@ environment colours, a settings toggle for workspace cleanup.
       record per-vault read access findings here. Also verify that a second
       launch (e.g. "Open with") does not wipe the running instance's
       workspace (review advisory R3-startup-cleanup-cross-instance).
+      Partial (user, 2026-10-01): connecting, pulling and editing a secret
+      against a real vault work. Point 4 (edge cases) was not run.
+
+### Plugin menu slice (user request, 2026-10-01; PR3 on `feat/vault-plugin-menu`)
+The user asked for Vault to be optional: a switch in a Plugins menu turns it
+on, checks the Azure session or asks for one, and shows the Vault panel on the
+left where Files is.
+- [ ] T8 — Backend `vault_login` command: runs `az login` (browser flow,
+      argument array, no shell) through the existing `CommandRunner` with a
+      longer timeout (5 min), discards its stdout (an account listing, never a
+      token), then returns `whoami`. Errors map like the other commands
+      (`timeout`, `az_missing`, `cli`). The app still never reads or stores a
+      token.
+- [ ] T9 — Plugins menu in the toolbar with an "Azure Key Vault" switch
+      (`role="switch"`, keyboard accessible). It is off by default and persisted
+      in `localStorage` with a try/catch fallback to off. A pure, tested plugin
+      settings model.
+- [ ] T10 — The left sidebar gets tabs **Files | Vault**. The Vault tab exists
+      only while the plugin is on, and it leaves the right panel. Turning the
+      plugin on checks `vault_status`. If not signed in, the panel shows
+      "Sign in to Azure" (→ `vault_login` → re-check) and the vault search
+      stays disabled until a session exists. Turning it off hides the tab and
+      returns to Files. The collapse rail label follows the active tab.
 
 ## Route per task
 | Task | Route | Trigger evidence |
@@ -115,6 +138,7 @@ environment colours, a settings toggle for workspace cleanup.
 | T7 | delegated writer (backend) | 2+ non-trivial Rust files (az_cli, service, domain) |
 | T5 | delegated writer (frontend) | 3+ non-trivial files (panel, helpers, markup/css) |
 | T6 | inline, by the user | needs the user's `az login` session |
+| T8–T10 | delegated writer (one bounded writer, backend + frontend) | 4+ non-trivial files (az_cli/commands/lib.rs, toolbar, sidebar, vault panel, css) |
 
 ## Acceptance criteria
 - With a valid `az login`, entering a vault name lists its secrets; typing in
@@ -140,7 +164,9 @@ mapping, service pull/list flows, and the pure frontend helpers.
 Forecast: ~1,300 authored changed lines across T1–T5, above the ~400-line
 slice budget. Strategy: `ask-on-risk`; chain strategy `stacked-to-main`
 (user choice, 2026-09-30). Planned slices: PR1 backend (T1–T4), PR2 frontend
-(T5), each opened against `main` once its predecessor merges.
+(T5), each opened against `main` once its predecessor merges. PR3 (T8–T10,
+plugin menu) sits on `feat/vault-plugin-menu`, stacked on PR2; forecast is
+about 600 lines.
 Branch: `feat/vault-sync` from `main` (09ee339). First reviewed boundary: 09ee339.
 
 ## Progress

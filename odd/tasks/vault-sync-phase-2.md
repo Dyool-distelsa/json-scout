@@ -171,6 +171,24 @@ compare, and creating or deleting secrets.
       destroys the window itself after a handler that did not prevent the close
       (`onCloseRequested` needs nothing beyond `core:event:default`). RED: stubs
       first (26 failures), then 9 mutations of the guard, all caught.
+- [x] P8 — Review advisories (all non-blocking findings of the approved reviews).
+      Close guard: `vault_local_changes` is raced against a 3 s timer
+      (`CHECK_TIMEOUT_MS`, injectable as `checkTimeoutMs`); a timeout asks the
+      generic "could not check" question, and `prompting` is released on every
+      path. Session loss: a `not_signed_in` answer to a push or to "Review
+      again" closes the dialog at once and calls `onSignedOut`, which runs the
+      panel's `handleCallError` (signed-out stage, expiry toast), because
+      nothing in the dialog can succeed without a session and a retry button
+      would only fail again. Diff: rows are computed once per preview
+      (`analyse`) and reused on reveal; typing only refreshes the controls. P5b
+      tests: the racing-push test uses `recv_timeout` (5 s) and fails instead
+      of hanging; a failed `provider.get` restores the preview; the conflict
+      retry asserts no `set` on the refused attempt and exactly one after.
+      RED: 5 close-guard, 6 session-loss and 4 diff-count tests failed on
+      assertions before the fix. Rust hardening shown by breaking the guarded
+      line: no restore after a failed read (1 failure), `set` on a conflict
+      (the strengthened retry test among 5), a push that never reaches `set`
+      (racing test fails after 5 s). JS 610 -> 626 tests, Rust 252 -> 253.
 
 ## Route per task
 | Task | Route | Trigger evidence |
@@ -208,6 +226,7 @@ batch with the user's consent. Nothing is pushed until the user says so.
 - Backend batch P2–P5 done, one commit per task. Rust 126 -> 241 tests.
 - Review fixes P5b (overwrite over an unseen version, atomic gate) done: 252 Rust tests.
 - Frontend batch P1, P6, P7 done, one commit per task. JS 469 -> 610 tests.
+- Review advisories P8 done in two commits. JS 626, Rust 253 tests.
 
 ## Frontend contract (for P6/P7)
 Errors are `{ kind, message }`; the new kinds are `not_pulled`, `invalid_json`,

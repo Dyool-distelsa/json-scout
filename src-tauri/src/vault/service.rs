@@ -445,6 +445,11 @@ mod tests {
             );
         }
 
+        /// Make the next reads of a secret fail, as if the vault were unreachable.
+        fn fail_remote_read(&self, name: &str, error: VaultError) {
+            self.values.lock().unwrap().insert(name.to_string(), Err(error));
+        }
+
         /// Every `(secret, value)` handed to `set`, in order.
         fn sets(&self) -> Vec<(SecretRef, String)> {
             self.sets.lock().unwrap().clone()
@@ -1258,16 +1263,46 @@ mod tests {
             svc.push("kv", "cfg", &preview.content_hash, false),
             Err(VaultError::Conflict)
         );
+        assert!(svc.provider.sets().is_empty(), "the refused attempt wrote nothing");
+        assert_eq!(svc.gate.len(), 1, "the preview is still there for the retry");
 
         // The conflict was resolved on the vault side (it is back at v1).
         svc.provider.set_remote("cfg", PULLED, "v1");
         svc.push("kv", "cfg", &preview.content_hash, false).expect("retry");
+        assert_eq!(svc.provider.sets().len(), 1, "exactly one write, from the retry");
+    }
+
+    #[test]
+    fn a_failed_remote_read_keeps_the_preview_for_a_retry_with_the_same_hash() {
+        let (_dir, svc, preview) = previewed_service(EDITED);
+        svc.provider.fail_remote_read("cfg", VaultError::Timeout);
+
+        assert_eq!(
+            svc.push("kv", "cfg", &preview.content_hash, false),
+            Err(VaultError::Timeout)
+        );
+        assert!(svc.provider.sets().is_empty(), "nothing was written without a remote read");
+        assert_eq!(svc.gate.len(), 1, "the preview was put back");
+
+        // The vault answers again, still at the version the user pulled.
+        svc.provider.set_remote("cfg", PULLED, "v1");
+        let result = svc
+            .push("kv", "cfg", &preview.content_hash, false)
+            .expect("retry with the same hash");
+
+        assert_eq!(result.new_version, "v-new");
+        assert_eq!(svc.provider.sets().len(), 1);
     }
 
     #[test]
     fn two_pushes_racing_with_the_same_hash_write_once() {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::mpsc;
+        use std::time::Duration;
+
+        // Generous for a loaded CI machine, short enough that a push which never
+        // reaches `set` fails the test instead of hanging it.
+        const WAIT: Duration = Duration::from_secs(5);
 
         let (_dir, mut svc, preview) = previewed_service(EDITED);
         let (entered_tx, entered_rx) = mpsc::channel::<()>();
@@ -1279,7 +1314,7 @@ mod tests {
         svc.provider.on_set = Some(Box::new(move || {
             if first.swap(false, Ordering::SeqCst) {
                 entered_tx.lock().unwrap().send(()).unwrap();
-                release_rx.lock().unwrap().recv().unwrap();
+                let _ = release_rx.lock().unwrap().recv_timeout(WAIT);
             }
         }));
 
@@ -1287,7 +1322,8 @@ mod tests {
             let svc = &svc;
             let hash = preview.content_hash.as_str();
             let first = scope.spawn(move || svc.push("kv", "cfg", hash, false));
-            entered_rx.recv().expect("the first push reached set");
+            let reached = entered_rx.recv_timeout(WAIT);
+            assert!(reached.is_ok(), "the first push never reached set: {reached:?}");
             // The second push arrives while the first is still writing.
             let second = svc.push("kv", "cfg", hash, false);
             release_tx.send(()).unwrap();

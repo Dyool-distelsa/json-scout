@@ -114,6 +114,10 @@ mod tests {
         login: Result<Identity, VaultError>,
         listing: Result<Vec<SecretSummary>, VaultError>,
         values: HashMap<String, Result<SecretValue, VaultError>>,
+        /// What `set` answers with.
+        set_result: Result<SecretValue, VaultError>,
+        /// Every `(secret, value)` handed to `set`.
+        sets: Mutex<Vec<(SecretRef, String)>>,
         calls: Mutex<Vec<String>>,
     }
 
@@ -130,6 +134,12 @@ mod tests {
                 }),
                 listing: Ok(Vec::new()),
                 values: HashMap::new(),
+                set_result: Ok(SecretValue {
+                    value: String::new(),
+                    version: "v-new".into(),
+                    updated: None,
+                }),
+                sets: Mutex::new(Vec::new()),
                 calls: Mutex::new(Vec::new()),
             }
         }
@@ -187,6 +197,18 @@ mod tests {
                 .get(&secret.name)
                 .cloned()
                 .unwrap_or(Err(VaultError::NotFound))
+        }
+
+        fn set(&self, secret: &SecretRef, value: &str) -> Result<SecretValue, VaultError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("set {}/{}", secret.vault, secret.name));
+            self.sets
+                .lock()
+                .unwrap()
+                .push((secret.clone(), value.to_string()));
+            self.set_result.clone()
         }
     }
 

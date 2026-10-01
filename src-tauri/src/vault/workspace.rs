@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 pub const ROOT_DIR_NAME: &str = "vault-sync";
 
 const BASE_DIR: &str = ".base";
+const STAGING_DIR: &str = ".tmp";
 
 /// How a secret value is stored locally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +196,14 @@ impl Workspace {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(err.into()),
         }
+    }
+
+    /// Folder for short-lived files that must not live in `%TEMP%`: the
+    /// staged value of a push. A vault name cannot contain a dot, so it can
+    /// never collide with a vault's own folder, and `clean(None)` removes it
+    /// with the rest of the workspace.
+    pub fn staging_dir(&self) -> PathBuf {
+        self.root.join(STAGING_DIR)
     }
 
     fn vault_dir(&self, vault: &str) -> Result<PathBuf, VaultError> {
@@ -611,6 +620,37 @@ mod tests {
         assert!(!vault_dir.join(".base").join("cfg.json").exists());
         let meta = fs::read_to_string(vault_dir.join("cfg.meta.json")).unwrap();
         assert!(meta.contains("\"v2\"") && meta.contains("\"text\""), "{meta}");
+    }
+
+    // --- staging ---
+
+    #[test]
+    fn the_staging_dir_is_a_dot_tmp_folder_inside_the_workspace_root() {
+        let (_dir, ws) = workspace();
+        assert_eq!(ws.staging_dir(), ws.root().join(".tmp"));
+    }
+
+    #[test]
+    fn the_staging_dir_goes_with_the_workspace_and_is_not_touched_by_a_scoped_clean() {
+        let (_dir, ws) = workspace();
+        ws.write_pull("kv", "a", &secret("1", "v1")).unwrap();
+        fs::create_dir_all(ws.staging_dir()).unwrap();
+        fs::write(ws.staging_dir().join("leftover.tmp"), "x").unwrap();
+
+        ws.clean(Some("kv")).unwrap();
+        assert!(ws.staging_dir().join("leftover.tmp").exists());
+
+        ws.clean(None).unwrap();
+        assert!(!ws.staging_dir().exists());
+    }
+
+    #[test]
+    fn a_vault_cannot_be_named_like_the_staging_folder() {
+        let (_dir, ws) = workspace();
+        assert_eq!(
+            ws.write_pull(".tmp", "a", &secret("1", "v1")),
+            Err(VaultError::InvalidName)
+        );
     }
 
     // --- clean ---

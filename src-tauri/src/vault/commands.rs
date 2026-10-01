@@ -28,7 +28,8 @@ fn workspace_for(app: &AppHandle) -> Result<Workspace, VaultError> {
 }
 
 fn service_for(workspace: Workspace) -> Service {
-    VaultService::new(AzCliProvider::new(SystemRunner::default()), workspace)
+    let provider = AzCliProvider::new(SystemRunner::default(), workspace.staging_dir());
+    VaultService::new(provider, workspace)
 }
 
 /// Run blocking work on the blocking pool, mapping a join failure (including

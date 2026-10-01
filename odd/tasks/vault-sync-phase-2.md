@@ -99,9 +99,17 @@ compare, and creating or deleting secrets.
       returns an `internal` error for any other leaf. 164 Rust tests pass (+9);
       RED was 6 failing on assertions (failure injected by putting a directory
       at the working-copy path).
-- [ ] P4 — `az` adapter `set` and `show` of the current version, through a
+- [x] P4 — `az` adapter `set` and `show` of the current version, through a
       temp file with a `Drop` guard; the trait gains `set`. Adapter tests check
       the argument arrays and that no value appears in them.
+      Done: `SecretProvider::set`; the staging folder is injected into
+      `AzCliProvider::new(runner, staging_dir)` (`Workspace::staging_dir()` is
+      `{root}/.tmp`), so the port stays free of filesystem details. The current
+      remote version reuses `get`: one `az` call that also yields the remote
+      text for a conflict, where a separate `current_version` would add a
+      second call. `StagedFile` is created with `create_new` and deleted by
+      `Drop`; `--content-type` is sent only for JSON objects/arrays
+      (`json_text::is_container`). 181 Rust tests pass (+17); RED was 16 failing.
 - [ ] P5 — Service and commands: `vault_push_preview` (validity, empty-diff
       detection, remote version check, environment, hash) and `vault_push`
       (hash gate, overwrite flag, minify, set, then update base and meta with

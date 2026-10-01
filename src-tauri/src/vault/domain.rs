@@ -1,8 +1,8 @@
 //! Vault domain: value types, the error taxonomy and the provider port.
 //!
 //! Nothing here touches the network, the filesystem or a process. The port
-//! is deliberately read-only in this phase: there is no `set` and no version
-//! history, so no adapter can write to a vault through it.
+//! can read a secret and create a new version of one (`set`). It cannot delete
+//! or purge anything, and there is no version history yet.
 
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
@@ -140,6 +140,10 @@ pub trait SecretProvider: Send + Sync {
     /// system browser and blocks until the user finishes), then report who is
     /// signed in. It never returns a credential.
     fn login(&self) -> Result<Identity, VaultError>;
+    /// Create a new version of `secret` holding exactly `value`, and return
+    /// it with the version the vault assigned. The old versions stay in the
+    /// vault. A secret value never travels in a process argument.
+    fn set(&self, secret: &SecretRef, value: &str) -> Result<SecretValue, VaultError>;
 }
 
 /// Accept only `^[A-Za-z0-9-]{1,127}$`, and additionally refuse a leading

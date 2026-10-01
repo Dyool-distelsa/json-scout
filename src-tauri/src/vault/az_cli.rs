@@ -1,10 +1,11 @@
-//! Azure CLI adapter for the read-only [`SecretProvider`] port.
+//! Azure CLI adapter for the [`SecretProvider`] port.
 //!
 //! The adapter never builds a shell string: it hands a program name and an
 //! argument array to an injected [`CommandRunner`]. Secret operations are
-//! read-only (secret list, secret show); the only other calls are the account
-//! lookup and the interactive `az login`. Every vault and secret name is
-//! validated before it can reach an argument.
+//! list, show and one write, `secret set`, whose value travels in a staged
+//! file (`--file`) and never in an argument. The only other calls are the
+//! account lookup and the interactive `az login`. Every vault and secret name
+//! is validated before it can reach an argument or a file is written.
 //!
 //! Error values are built from fixed text or a short first line of stderr;
 //! stdout (which carries secret values) is never copied into an error.
@@ -12,8 +13,12 @@
 use super::domain::{
     validate_name, Identity, SecretProvider, SecretRef, SecretSummary, SecretValue, VaultError,
 };
+use super::json_text;
 use serde_json::Value;
-use std::io::{self, Read};
+use std::fs;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -204,13 +209,89 @@ fn kill_and_reap(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// Distinguishes staged files created in the same nanosecond.
+static STAGED_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// How many fresh names to try before giving up on creating a staged file.
+const STAGED_NAME_ATTEMPTS: usize = 8;
+
+/// A file holding a secret value, handed to `az` by path (a value in an
+/// argument would show up in the process list). The guard deletes the file
+/// when dropped, on success, on an error and while unwinding from a panic.
+/// A release build aborts on panic instead; the workspace cleanup at startup
+/// removes whatever such a crash leaves in the staging folder.
+struct StagedFile {
+    path: PathBuf,
+}
+
+impl StagedFile {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Create `path`, which must not exist yet, holding `contents`. The guard
+    /// exists from the moment the file does, so a failed write cannot leave
+    /// it behind, but a clash (`AlreadyExists`) never deletes the file that
+    /// was already there.
+    fn create_exclusive(path: PathBuf, contents: &str) -> io::Result<StagedFile> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
+        let staged = StagedFile { path };
+        {
+            // Closed before `az` opens it, which matters on Windows.
+            let mut file = file;
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+        }
+        Ok(staged)
+    }
+
+    /// Create a file with a fresh name inside `dir`.
+    fn create_in(dir: &Path, contents: &str) -> io::Result<StagedFile> {
+        for _ in 0..STAGED_NAME_ATTEMPTS {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0);
+            let sequence = STAGED_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let name = format!("secret-{}-{nanos}-{sequence}.tmp", std::process::id());
+            match StagedFile::create_exclusive(dir.join(name), contents) {
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+                other => return other,
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "no free staging file name was found",
+        ))
+    }
+}
+
+impl Drop for StagedFile {
+    fn drop(&mut self) {
+        // Nothing useful can be done about a failure here.
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 pub struct AzCliProvider<R: CommandRunner> {
     runner: R,
+    /// Folder for the short-lived files that carry a value to `az set`.
+    staging_dir: PathBuf,
 }
 
 impl<R: CommandRunner> AzCliProvider<R> {
-    pub fn new(runner: R) -> Self {
-        AzCliProvider { runner }
+    pub fn new(runner: R, staging_dir: PathBuf) -> Self {
+        AzCliProvider {
+            runner,
+            staging_dir,
+        }
     }
 
     /// Run `az` and return its output of a successful exit; a spawn failure
@@ -309,16 +390,61 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
         let value = shown["value"].as_str().ok_or(VaultError::Parse)?;
         let id = shown["id"].as_str().ok_or(VaultError::Parse)?;
         let version = version_from_id(id)?;
-        let updated = match &shown["attributes"]["updated"] {
-            Value::String(text) => Some(text.clone()),
-            Value::Number(number) => Some(number.to_string()),
-            _ => None,
-        };
         Ok(SecretValue {
             value: value.to_string(),
             version: version.to_string(),
-            updated,
+            updated: updated_attribute(&shown),
         })
+    }
+
+    fn set(&self, secret: &SecretRef, value: &str) -> Result<SecretValue, VaultError> {
+        validate_name(&secret.vault)?;
+        validate_name(&secret.name)?;
+        fs::create_dir_all(&self.staging_dir)?;
+        let staged = StagedFile::create_in(&self.staging_dir, value)?;
+        let file = staged
+            .path()
+            .to_str()
+            .ok_or_else(|| VaultError::Io("the staging path is not valid UTF-8".into()))?;
+
+        let mut args = to_args(&[
+            "keyvault",
+            "secret",
+            "set",
+            "--vault-name",
+            &secret.vault,
+            "--name",
+            &secret.name,
+            "--file",
+            file,
+            "--encoding",
+            "utf-8",
+        ]);
+        if json_text::is_container(value) {
+            args.extend(to_args(&["--content-type", "application/json"]));
+        }
+        args.extend(to_args(&["-o", "json"]));
+
+        // `staged` lives until this function returns, whatever the outcome.
+        let stored = self.run_json(args)?;
+        let id = stored["id"].as_str().ok_or(VaultError::Parse)?;
+        let version = version_from_id(id)?;
+        Ok(SecretValue {
+            // What was set, not what `az` echoes back.
+            value: value.to_string(),
+            version: version.to_string(),
+            updated: updated_attribute(&stored),
+        })
+    }
+}
+
+/// `attributes.updated` of an `az` secret document, whether it is rendered as
+/// text or as a number.
+fn updated_attribute(document: &Value) -> Option<String> {
+    match &document["attributes"]["updated"] {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
     }
 }
 
@@ -406,6 +532,9 @@ mod tests {
         calls: Mutex<Vec<Call>>,
         /// Timeout passed with each call: `None` for a plain `run`.
         timeouts: Mutex<Vec<Option<Duration>>>,
+        /// Contents of the file named by `--file`, read at the moment the
+        /// command runs (`None` for a call without `--file`).
+        file_reads: Mutex<Vec<Option<Vec<u8>>>>,
         replies: Mutex<VecDeque<io::Result<CmdOutput>>>,
     }
 
@@ -414,8 +543,13 @@ mod tests {
             FakeRunner {
                 calls: Mutex::new(Vec::new()),
                 timeouts: Mutex::new(Vec::new()),
+                file_reads: Mutex::new(Vec::new()),
                 replies: Mutex::new(replies.into()),
             }
+        }
+
+        fn file_reads(&self) -> Vec<Option<Vec<u8>>> {
+            self.file_reads.lock().unwrap().clone()
         }
 
         fn record(
@@ -429,6 +563,12 @@ mod tests {
                 .unwrap()
                 .push((program.to_string(), args.to_vec()));
             self.timeouts.lock().unwrap().push(timeout);
+            let file = args
+                .iter()
+                .position(|arg| arg == "--file")
+                .and_then(|at| args.get(at + 1))
+                .and_then(|path| std::fs::read(path).ok());
+            self.file_reads.lock().unwrap().push(file);
             self.replies
                 .lock()
                 .unwrap()
@@ -476,8 +616,12 @@ mod tests {
         })
     }
 
+    /// For the read calls, which never stage a file.
     fn provider(replies: Vec<io::Result<CmdOutput>>) -> AzCliProvider<FakeRunner> {
-        AzCliProvider::new(FakeRunner::new(replies))
+        AzCliProvider::new(
+            FakeRunner::new(replies),
+            std::path::PathBuf::from("unused-staging-folder"),
+        )
     }
 
     fn strings(items: &[&str]) -> Vec<String> {
@@ -1040,6 +1184,282 @@ ERROR: (Forbidden) The user does not have secrets get permission.
         assert!(matches!(p.whoami(), Err(VaultError::Io(_))));
     }
 
+    // --- set ---
+
+    const SET_OUTPUT: &str = r#"{
+        "attributes": { "enabled": true, "updated": "2025-04-02T08:30:00+00:00" },
+        "contentType": "application/json",
+        "id": "https://kv-demo.vault.azure.net/secrets/app-config/fedcba9876543210",
+        "name": "app-config",
+        "value": "echoed by az, never used"
+    }"#;
+
+    /// A provider whose staging directory is a fresh folder that does not
+    /// exist yet (the adapter has to create it).
+    fn staged(
+        replies: Vec<io::Result<CmdOutput>>,
+    ) -> (tempfile::TempDir, std::path::PathBuf, AzCliProvider<FakeRunner>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let staging = dir.path().join("vault-sync").join(".tmp");
+        let provider = AzCliProvider::new(FakeRunner::new(replies), staging.clone());
+        (dir, staging, provider)
+    }
+
+    fn staged_files(staging: &std::path::Path) -> Vec<std::path::PathBuf> {
+        match std::fs::read_dir(staging) {
+            Ok(entries) => entries.flatten().map(|e| e.path()).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn expected_set_args(vault: &str, name: &str, file: &str, json: bool) -> Vec<String> {
+        let mut args = strings(&[
+            "keyvault",
+            "secret",
+            "set",
+            "--vault-name",
+            vault,
+            "--name",
+            name,
+            "--file",
+            file,
+            "--encoding",
+            "utf-8",
+        ]);
+        if json {
+            args.extend(strings(&["--content-type", "application/json"]));
+        }
+        args.extend(strings(&["-o", "json"]));
+        args
+    }
+
+    #[test]
+    fn set_runs_secret_set_with_a_file_argument_and_the_exact_argument_array() {
+        let (_dir, staging, p) = staged(vec![ok(SET_OUTPUT)]);
+
+        p.set(&secret_ref("kv-demo", "app-config"), r#"{"b":1}"#)
+            .expect("set");
+
+        let calls = p.runner.calls();
+        assert_eq!(calls.len(), 1);
+        let (program, args) = &calls[0];
+        assert_eq!(program, az_program());
+        assert_eq!(args[7], "--file");
+        let file = std::path::PathBuf::from(&args[8]);
+        assert_eq!(file.parent(), Some(staging.as_path()));
+        assert_eq!(
+            args,
+            &expected_set_args("kv-demo", "app-config", &args[8], true)
+        );
+        assert_eq!(p.runner.timeouts(), vec![None]);
+    }
+
+    #[test]
+    fn set_returns_the_new_version_and_updated_time_from_the_id() {
+        let (_dir, _staging, p) = staged(vec![ok(SET_OUTPUT)]);
+
+        let stored = p
+            .set(&secret_ref("kv-demo", "app-config"), r#"{"b":1}"#)
+            .unwrap();
+
+        assert_eq!(stored.version, "fedcba9876543210");
+        assert_eq!(stored.updated.as_deref(), Some("2025-04-02T08:30:00+00:00"));
+        assert_eq!(stored.value, r#"{"b":1}"#, "the value that was set, not az's echo");
+    }
+
+    #[test]
+    fn set_passes_the_content_type_only_for_json_objects_and_arrays() {
+        for (value, json) in [
+            (r#"{"a":1}"#, true),
+            ("[1,2]", true),
+            (" \n{\"a\": 1}\n", true),
+            ("123", false),
+            ("true", false),
+            ("plain text", false),
+            ("{broken", false),
+            ("", false),
+        ] {
+            let (_dir, _staging, p) = staged(vec![ok(SET_OUTPUT)]);
+            p.set(&secret_ref("kv", "n"), value).unwrap();
+            let args = &p.runner.calls()[0].1;
+            assert_eq!(
+                args.iter().any(|a| a == "--content-type"),
+                json,
+                "{value:?}"
+            );
+            assert_eq!(args, &expected_set_args("kv", "n", &args[8], json), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn set_hands_az_a_file_holding_exactly_the_value_bytes() {
+        for value in [
+            "{\"a\":1}",
+            "line one\nline two\r\n",
+            "  padded  ",
+            "ñandú 名前 😀",
+            "{\"quote\":\"\\\"\",\"nl\":\"a\\nb\"}\n",
+        ] {
+            let (_dir, _staging, p) = staged(vec![ok(SET_OUTPUT)]);
+            p.set(&secret_ref("kv", "n"), value).unwrap();
+            assert_eq!(
+                p.runner.file_reads(),
+                vec![Some(value.as_bytes().to_vec())],
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_value_never_appears_in_any_recorded_argument() {
+        let secrets = [
+            "hunter2-super-secret",
+            r#"{"password":"hunter2-super-secret"}"#,
+            "[\"hunter2-super-secret\"]",
+        ];
+        for value in secrets {
+            let (_dir, _staging, p) = staged(vec![
+                ok(SET_OUTPUT),
+                fail("ERROR: Forbidden"),
+                Err(io::Error::from(io::ErrorKind::NotFound)),
+                Err(io::Error::from(io::ErrorKind::TimedOut)),
+            ]);
+            let _ = p.set(&secret_ref("kv", "n"), value);
+            let _ = p.set(&secret_ref("kv", "n"), value);
+            let _ = p.set(&secret_ref("kv", "n"), value);
+            let _ = p.set(&secret_ref("kv", "n"), value);
+
+            let calls = p.runner.calls();
+            assert_eq!(calls.len(), 4);
+            for (program, args) in calls {
+                assert!(!program.contains("hunter2"));
+                for arg in args {
+                    assert!(!arg.contains("hunter2"), "{arg:?}");
+                    assert!(!arg.contains("super-secret"), "{arg:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_staged_file_is_removed_after_a_successful_set() {
+        let (_dir, staging, p) = staged(vec![ok(SET_OUTPUT)]);
+        p.set(&secret_ref("kv", "n"), "value").unwrap();
+
+        assert_eq!(p.runner.file_reads(), vec![Some(b"value".to_vec())]);
+        assert!(staged_files(&staging).is_empty(), "{:?}", staged_files(&staging));
+    }
+
+    #[test]
+    fn the_staged_file_is_removed_after_every_kind_of_failed_run() {
+        for reply in [
+            fail("ERROR: (Forbidden) caller does not have secrets set permission"),
+            fail("ERROR: Please run 'az login'"),
+            fail(""),
+            Err(io::Error::from(io::ErrorKind::NotFound)),
+            Err(io::Error::from(io::ErrorKind::TimedOut)),
+            Err(io::Error::other("boom")),
+            ok("not json"),
+            ok(r#"{"id":"https://kv.vault.azure.net/secrets/n"}"#),
+            ok("{}"),
+        ] {
+            let (_dir, staging, p) = staged(vec![reply]);
+            assert!(p.set(&secret_ref("kv", "n"), "value").is_err());
+            assert_eq!(p.runner.file_reads(), vec![Some(b"value".to_vec())]);
+            assert!(staged_files(&staging).is_empty(), "{:?}", staged_files(&staging));
+        }
+    }
+
+    #[test]
+    fn set_maps_failures_like_the_read_calls_do() {
+        let cases = [
+            (fail("ERROR: (Forbidden) Access denied"), VaultError::Forbidden),
+            (fail("ERROR: Please run 'az login' to setup account."), VaultError::NotSignedIn),
+            (Err(io::Error::from(io::ErrorKind::NotFound)), VaultError::AzMissing),
+            (Err(io::Error::from(io::ErrorKind::TimedOut)), VaultError::Timeout),
+            (ok("not json"), VaultError::Parse),
+            (ok(r#"{"id":"https://kv.vault.azure.net/secrets/n"}"#), VaultError::Parse),
+        ];
+        for (reply, expected) in cases {
+            let (_dir, _staging, p) = staged(vec![reply]);
+            assert_eq!(p.set(&secret_ref("kv", "n"), "v"), Err(expected));
+        }
+    }
+
+    #[test]
+    fn invalid_names_are_rejected_before_any_file_is_written() {
+        let (_dir, staging, p) = staged(vec![]);
+        for bad in ["", "a b", "a;b", "--query", "-o", "a/b", "a.b", "$(whoami)", "a\"b"] {
+            assert_eq!(
+                p.set(&secret_ref(bad, "ok-name"), "value"),
+                Err(VaultError::InvalidName),
+                "vault {bad:?}"
+            );
+            assert_eq!(
+                p.set(&secret_ref("ok-vault", bad), "value"),
+                Err(VaultError::InvalidName),
+                "secret {bad:?}"
+            );
+        }
+        assert!(p.runner.calls().is_empty());
+        assert!(!staging.exists(), "the staging folder must not even be created");
+    }
+
+    #[test]
+    fn a_staging_folder_that_cannot_be_created_is_an_io_error_and_az_is_not_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a folder").unwrap();
+        let p = AzCliProvider::new(FakeRunner::new(vec![ok(SET_OUTPUT)]), blocker.join(".tmp"));
+
+        assert!(matches!(p.set(&secret_ref("kv", "n"), "v"), Err(VaultError::Io(_))));
+        assert!(p.runner.calls().is_empty());
+    }
+
+    // --- staged file ---
+
+    #[test]
+    fn a_staged_file_is_created_exclusively_and_a_clash_keeps_the_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("taken.tmp");
+        std::fs::write(&path, "somebody else's file").unwrap();
+
+        let result = StagedFile::create_exclusive(path.clone(), "mine");
+
+        assert_eq!(result.err().map(|e| e.kind()), Some(io::ErrorKind::AlreadyExists));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "somebody else's file");
+    }
+
+    #[test]
+    fn a_staged_file_is_deleted_when_it_is_dropped_even_while_unwinding() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("once.tmp");
+        let staged = StagedFile::create_exclusive(path.clone(), "value").unwrap();
+        assert!(path.exists());
+        drop(staged);
+        assert!(!path.exists());
+
+        let path = dir.path().join("unwound.tmp");
+        let inner = path.clone();
+        let outcome = std::panic::catch_unwind(move || {
+            let _guard = StagedFile::create_exclusive(inner, "value").unwrap();
+            panic!("simulated failure while the file exists");
+        });
+        assert!(outcome.is_err());
+        assert!(!path.exists(), "the guard must clean up on unwind");
+    }
+
+    #[test]
+    fn staged_files_get_distinct_names_inside_the_given_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = StagedFile::create_in(dir.path(), "a").unwrap();
+        let b = StagedFile::create_in(dir.path(), "b").unwrap();
+        assert_ne!(a.path(), b.path());
+        assert_eq!(a.path().parent(), Some(dir.path()));
+        assert_eq!(std::fs::read_to_string(a.path()).unwrap(), "a");
+        assert_eq!(std::fs::read_to_string(b.path()).unwrap(), "b");
+    }
+
     // --- validation and read-only guarantees ---
 
     #[test]
@@ -1080,14 +1500,20 @@ ERROR: (Forbidden) The user does not have secrets get permission.
     }
 
     #[test]
-    fn the_adapter_source_contains_no_write_subcommand() {
+    fn the_adapter_source_has_exactly_one_write_subcommand_and_never_a_value_flag() {
         let source = include_str!("az_cli.rs");
         let production = source
             .split_once("#[cfg(test)]")
             .map(|(head, _)| head)
             .expect("test module marker");
-        assert!(!production.contains("\"set\""));
+        assert_eq!(
+            production.matches("\"set\"").count(),
+            1,
+            "the only write is the file-based secret set"
+        );
         assert!(!production.contains("\"delete\""));
-        assert!(!production.contains("\"--value\""));
+        assert!(!production.contains("\"purge\""));
+        assert!(!production.contains("\"--value\""), "values travel by --file only");
+        assert!(production.contains("\"--file\""));
     }
 }

@@ -76,6 +76,14 @@ pub fn minify(text: &str) -> Result<String, JsonTextError> {
     Ok(out)
 }
 
+/// Whether `text` is a valid JSON object or array. A JSON scalar such as `123`
+/// or `true` is indistinguishable from a plain password, so it does not count.
+pub fn is_container(text: &str) -> bool {
+    text.trim_start_matches([' ', '\t', '\n', '\r'])
+        .starts_with(['{', '['])
+        && parse(text).is_ok()
+}
+
 /// Every repeated key in `text`, in document order.
 pub fn duplicate_keys(text: &str) -> Result<Vec<DuplicateKey>, JsonTextError> {
     let root = parse(text)?;
@@ -734,6 +742,18 @@ mod tests {
         assert!(pretty(&nested(MAX_DEPTH + 1)).is_err());
         assert!(minify(&nested(MAX_DEPTH + 1)).is_err());
         assert!(pretty(&nested(100_000)).is_err(), "must not overflow the stack");
+    }
+
+    // --- is_container ---
+
+    #[test]
+    fn is_container_accepts_valid_objects_and_arrays_only() {
+        for text in ["{}", "[]", " \n{\"a\":1}\n", "[1,2,{\"b\":[]}]", "{\"a\":1,\"a\":2}"] {
+            assert!(is_container(text), "{text:?}");
+        }
+        for text in ["", "123", "true", "null", "\"x\"", "plain", "{broken", "[1,]", "{} x"] {
+            assert!(!is_container(text), "{text:?}");
+        }
     }
 
     // --- duplicate keys ---

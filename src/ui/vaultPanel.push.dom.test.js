@@ -312,4 +312,60 @@ describe('vault panel: pushing from the dialog', () => {
     expect(container.querySelector('.vault-badge--modified')).not.toBeNull();
     expect(ctx.notify).not.toHaveBeenCalledWith(expect.stringContaining('Pushed'), 'success');
   });
+  describe('when the Azure session ends inside the dialog', () => {
+    const signedOut = () => {
+      throw { kind: 'not_signed_in', message: 'raw' };
+    };
+    const stage = () => container.querySelector('.vault-panel').dataset.stage;
+
+    it('sends the panel to sign-in after a push finds the session gone', async () => {
+      const ctx = setup();
+      await review(ctx);
+      ctx.fake.on('vault_push', signedOut);
+
+      dialogButton('Push').click();
+      await settle();
+
+      expect(dialog()).toBeNull();
+      expect(stage()).toBe('signed-out');
+      expect(container.querySelector('.vault-results').hidden).toBe(true);
+      expect(ctx.notify).toHaveBeenCalledWith(
+        'Your Azure session has ended. Sign in again to continue.',
+        'error'
+      );
+      expect(ctx.fake.callsOf('vault_push')).toHaveLength(1);
+    });
+
+    it('sends the panel to sign-in after Review again finds the session gone', async () => {
+      const ctx = setup();
+      await review(ctx);
+      ctx.fake.on('vault_push', () => {
+        throw { kind: 'preview_required' };
+      });
+      dialogButton('Push').click();
+      await settle();
+      ctx.fake.on('vault_push_preview', signedOut);
+
+      dialogButton('Review again').click();
+      await settle();
+
+      expect(dialog()).toBeNull();
+      expect(stage()).toBe('signed-out');
+      expect(container.querySelector('.vault-results').hidden).toBe(true);
+    });
+
+    it('leaves nothing locked and offers the sign-in button', async () => {
+      const ctx = setup();
+      await review(ctx);
+      ctx.fake.on('vault_push', signedOut);
+
+      dialogButton('Push').click();
+      await settle();
+
+      const signIn = container.querySelector('.vault-auth__action');
+      expect(signIn.hidden).toBe(false);
+      expect(signIn.disabled).toBe(false);
+      expect(container.querySelector('.vault-panel').getAttribute('aria-busy')).toBe('false');
+    });
+  });
 });

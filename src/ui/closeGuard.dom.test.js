@@ -271,6 +271,123 @@ describe('installCloseGuard', () => {
     ).resolves.toBeTypeOf('function');
   });
 
+  describe('when the unpushed-edits check never answers', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    function hangingInstall(options = {}) {
+      const win = fakeWindow();
+      const fake = createFakeInvoke();
+      fake.on('vault_local_changes', () => new Promise(() => {}));
+      return installCloseGuard({
+        invoke: fake.invoke,
+        getWindow: async () => win,
+        notify: vi.fn(),
+        ...options,
+      }).then(() => ({ win, fake }));
+    }
+
+    it('asks the generic question after 3 seconds instead of waiting forever', async () => {
+      const { win } = await hangingInstall();
+      const event = closeRequest();
+
+      const handled = win.handler(event);
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(dialog()).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(dialog()).not.toBeNull();
+      expect(dialog().textContent).toContain('Could not check for unpushed edits');
+      buttonByText('Keep editing').click();
+      await handled;
+      expect(event.prevented).toBe(true);
+      expect(win.destroy).not.toHaveBeenCalled();
+    });
+
+    it('uses the timeout it is given', async () => {
+      const { win } = await hangingInstall({ checkTimeoutMs: 100 });
+
+      const handled = win.handler(closeRequest());
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(dialog()).not.toBeNull();
+      buttonByText('Keep editing').click();
+      await handled;
+    });
+
+    it('does not swallow the next close request once the timeout path has finished', async () => {
+      const { win, fake } = await hangingInstall({ checkTimeoutMs: 100 });
+      const first = win.handler(closeRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      buttonByText('Keep editing').click();
+      await first;
+
+      // The backend answers this time: nothing unpushed, so the window closes.
+      fake.on('vault_local_changes', []);
+      const event = closeRequest();
+      await win.handler(event);
+
+      expect(event.prevented).toBe(false);
+      expect(dialog()).toBeNull();
+    });
+
+    it('can ask again after discarding failed on the timeout path', async () => {
+      const { win } = await hangingInstall({ checkTimeoutMs: 100 });
+      const first = win.handler(closeRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      buttonByText('Keep editing').click();
+      await first;
+
+      const second = win.handler(closeRequest());
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(dialog()).not.toBeNull();
+      buttonByText('Keep editing').click();
+      await second;
+    });
+
+    it('does not let a late answer reopen anything after the timeout', async () => {
+      const win = fakeWindow();
+      let release;
+      const fake = createFakeInvoke();
+      fake.on('vault_local_changes', () => new Promise((resolve) => (release = resolve)));
+      await installCloseGuard({
+        invoke: fake.invoke,
+        getWindow: async () => win,
+        notify: vi.fn(),
+        checkTimeoutMs: 100,
+      });
+      const handled = win.handler(closeRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      buttonByText('Keep editing').click();
+      await handled;
+
+      release(TWO);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(dialog()).toBeNull();
+    });
+  });
+
+  it('is not trapped after the guard itself failed: the next close request still asks', async () => {
+    const win = fakeWindow();
+    await install({ changes: TWO, win });
+    const render = vi.spyOn(document.body, 'appendChild').mockImplementation(() => {
+      throw new Error('cannot render');
+    });
+    await win.handler(closeRequest());
+    render.mockRestore();
+
+    const event = closeRequest();
+    const handled = win.handler(event);
+    await settle();
+
+    expect(dialog()).not.toBeNull();
+    buttonByText('Keep editing').click();
+    await handled;
+    expect(event.prevented).toBe(true);
+  });
+
   it('lets the window close if the guard itself fails, rather than trapping the user', async () => {
     const win = fakeWindow();
     const { fake } = await install({ changes: TWO, win });

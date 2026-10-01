@@ -13,11 +13,33 @@ import { openModal } from './modal.js';
 /** Most vault/name lines the dialog lists; the rest are counted. */
 export const MAX_LISTED = 50;
 
+/**
+ * How long the close request waits for `vault_local_changes`. The call only
+ * reads the disk, so a slower answer means something is stuck; past this the
+ * guard asks the generic question instead of leaving the window unclosable.
+ */
+export const CHECK_TIMEOUT_MS = 3000;
+
 const CHECK_FAILED_MESSAGE =
   'Could not check for unpushed edits. Close and discard any you may have?';
 
 function failedCheck() {
   return { action: 'ask', message: CHECK_FAILED_MESSAGE, entries: [], hidden: 0 };
+}
+
+/**
+ * `promise`, or a rejection once `ms` have passed. The timer is always cleared.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @returns {Promise<T>}
+ */
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('check timed out')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -97,7 +119,9 @@ export function askDiscardOnClose(decision) {
  * clears the workspace and exits).
  *
  * If the guard itself breaks, the close is allowed: a window that cannot be
- * closed is worse than a missing question.
+ * closed is worse than a missing question. A check that does not answer within
+ * `checkTimeoutMs` is treated as a failed check (the generic question), and the
+ * guard's state is released on every path, so a later request is never swallowed.
  * @param {{
  *   invoke: (command: string, args?: object) => Promise<any>,
  *   getWindow: () => Promise<{
@@ -105,10 +129,16 @@ export function askDiscardOnClose(decision) {
  *     destroy: () => Promise<void>,
  *   }>,
  *   notify?: (message: string, kind?: 'success'|'error'|'info') => void,
+ *   checkTimeoutMs?: number,
  * }} deps
  * @returns {Promise<() => void>} removes the guard
  */
-export async function installCloseGuard({ invoke, getWindow, notify }) {
+export async function installCloseGuard({
+  invoke,
+  getWindow,
+  notify,
+  checkTimeoutMs = CHECK_TIMEOUT_MS,
+}) {
   let prompting = false;
   try {
     const win = await getWindow();
@@ -122,7 +152,7 @@ export async function installCloseGuard({ invoke, getWindow, notify }) {
       try {
         let outcome;
         try {
-          outcome = await invoke('vault_local_changes');
+          outcome = await withTimeout(invoke('vault_local_changes'), checkTimeoutMs);
         } catch (err) {
           outcome = err;
         }

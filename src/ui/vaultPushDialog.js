@@ -1,6 +1,6 @@
 import { el, button } from './dom.js';
 import { openModal } from './modal.js';
-import { errorMessage } from './vaultModel.js';
+import { errorMessage, isSignedOutError } from './vaultModel.js';
 import {
   environmentStyle,
   requiresTypedConfirmation,
@@ -58,6 +58,21 @@ function changeSection(title, change, revealed) {
 }
 
 /**
+ * The rows both sections show, computed once per preview: the diff is the
+ * dialog's one expensive step and does not depend on typing or revealing.
+ * @param {object} preview
+ * @returns {{ remote: object|null, local: object }}
+ */
+function analyse(preview) {
+  const format = preview.format;
+  const hasRemote = preview.remote?.conflict === true && typeof preview.remote.remoteText === 'string';
+  return {
+    remote: hasRemote ? changeRows(format, preview.baseText, preview.remote.remoteText) : null,
+    local: changeRows(format, preview.baseText, preview.workingText),
+  };
+}
+
+/**
  * The review step of a push: what changed (values masked until revealed), in
  * which environment, and the confirmation. The backend refuses a push that was
  * not previewed, so this dialog is the only way to push; it can also not push
@@ -67,6 +82,14 @@ function changeSection(title, change, revealed) {
  * preview shows the vault moved on since the pull, the dialog offers Re-pull
  * or Overwrite anyway instead of Push; if the vault moves on after the
  * preview, the push is refused and the dialog offers to review again.
+ *
+ * If the Azure session ended meanwhile (a push or "Review again" answers
+ * `not_signed_in`), nothing in the dialog can succeed any more: it closes at
+ * once and hands the error to `onSignedOut`, so the panel behind it moves to
+ * its sign-in view instead of keeping a list that no longer works.
+ *
+ * The diff rows are computed once per preview; typing the confirmation only
+ * refreshes the controls, and revealing values redraws the cells from the same rows.
  *
  * Secret values appear only as text, and only after "Reveal values": never in
  * attributes, titles or messages.
@@ -80,6 +103,7 @@ function changeSection(title, change, revealed) {
  *   onPushed: (result: { newVersion: string }) => void,
  *   onRepull: () => void,
  *   onClosed?: () => void,
+ *   onSignedOut?: (error: unknown) => void,
  * }} options
  * @returns {{ close: () => void, isOpen: () => boolean }}
  */
@@ -92,6 +116,7 @@ export function openPushDialog({
   onPushed,
   onRepull,
   onClosed,
+  onSignedOut,
 }) {
   const state = {
     preview,
@@ -100,6 +125,7 @@ export function openPushDialog({
     pushing: null, // null | 'push' | 'overwrite'
     refreshing: false,
     error: null, // { text, kind } | null
+    changes: analyse(preview), // diff rows for `preview`, computed once
   };
 
   const busy = () => state.pushing !== null || state.refreshing;
@@ -176,6 +202,12 @@ export function openPushDialog({
 
   // --- Rendering ------------------------------------------------------------
   function render() {
+    renderPreview();
+    renderControls();
+  }
+
+  /** Everything that depends on the preview or on reveal, not on typing. */
+  function renderPreview() {
     const style = environmentStyle(environment());
     modal.setTone(style.tone);
     envBadge.textContent = style.short;
@@ -193,26 +225,17 @@ export function openPushDialog({
 
     revealButton.textContent = state.reveal ? 'Hide values' : 'Reveal values';
     revealButton.setAttribute('aria-pressed', String(state.reveal));
-    const format = state.preview.format;
     const next = [];
-    if (conflict() && typeof remote.remoteText === 'string') {
-      next.push(
-        changeSection(
-          'Changed in Azure',
-          changeRows(format, state.preview.baseText, remote.remoteText),
-          state.reveal
-        )
-      );
+    if (state.changes.remote) {
+      next.push(changeSection('Changed in Azure', state.changes.remote, state.reveal));
     }
-    next.push(
-      changeSection(
-        'Your edits',
-        changeRows(format, state.preview.baseText, state.preview.workingText),
-        state.reveal
-      )
-    );
+    next.push(changeSection('Your edits', state.changes.local, state.reveal));
     sections.replaceChildren(...next);
+  }
 
+  /** The confirmation row, the buttons and the error: what typing and busy states change. */
+  function renderControls() {
+    const style = environmentStyle(environment());
     const current = mode();
     const needsTyped =
       requiresTypedConfirmation(environment()) && (current === 'push' || current === 'conflict');
@@ -267,9 +290,18 @@ export function openPushDialog({
       onPushed({ newVersion: result?.newVersion });
     } catch (err) {
       state.pushing = null;
+      if (endSession(err)) return;
       state.error = { text: errorMessage(err), kind: err?.kind };
       render();
     }
+  }
+
+  /** A lost session ends the dialog: close it, then let the caller move on. */
+  function endSession(err) {
+    if (!onSignedOut || !isSignedOutError(err)) return false;
+    modal.close();
+    onSignedOut(err);
+    return true;
   }
 
   async function reviewAgain() {
@@ -282,6 +314,7 @@ export function openPushDialog({
       fresh = await invoke('vault_push_preview', { vault, name });
     } catch (err) {
       state.refreshing = false;
+      if (endSession(err)) return;
       // Keep asking to review again unless the failure says to stop.
       const kind = err?.kind;
       state.error = {
@@ -298,6 +331,7 @@ export function openPushDialog({
       return;
     }
     state.preview = fresh;
+    state.changes = analyse(fresh);
     state.typed = '';
     typedInput.value = '';
     render();
@@ -310,7 +344,7 @@ export function openPushDialog({
 
   typedInput.addEventListener('input', () => {
     state.typed = typedInput.value;
-    render();
+    renderControls();
   });
   typedInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;

@@ -90,9 +90,15 @@ compare, and creating or deleting secrets.
       formatting and pull still succeed and push can refuse. 155 Rust tests
       pass (+29); RED was 22 of 27 formatter tests plus 6 `normalise`/pull
       tests failing on assertions.
-- [ ] P3 — Atomic pull: write base, then working, then meta last; a missing or
+- [x] P3 — Atomic pull: write base, then working, then meta last; a missing or
       stale meta means "not pulled". `clean(None)` only removes a root whose
       leaf is `vault-sync`.
+      Done: the old meta is removed first, so a failed re-pull cannot leave an
+      old meta describing a new base; `local_state` reads only the format named
+      by the meta and treats missing or unreadable meta as `remote`; `clean(None)`
+      returns an `internal` error for any other leaf. 164 Rust tests pass (+9);
+      RED was 6 failing on assertions (failure injected by putting a directory
+      at the working-copy path).
 - [ ] P4 — `az` adapter `set` and `show` of the current version, through a
       temp file with a `Drop` guard; the trait gains `set`. Adapter tests check
       the argument arrays and that no value appears in them.

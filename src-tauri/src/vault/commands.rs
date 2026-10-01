@@ -6,14 +6,14 @@
 use super::az_cli::{AzCliProvider, SystemRunner};
 use super::domain::{Identity, VaultError};
 use super::service::{PullResult, SecretListItem, VaultService};
-use super::workspace::Workspace;
+use super::workspace::{Workspace, ROOT_DIR_NAME};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 type Service = VaultService<AzCliProvider<SystemRunner>>;
 
 /// Folder name of the workspace inside the app data directory.
-const WORKSPACE_DIR: &str = "vault-sync";
+const WORKSPACE_DIR: &str = ROOT_DIR_NAME;
 
 fn workspace_root(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(WORKSPACE_DIR)
@@ -145,8 +145,19 @@ mod tests {
     #[test]
     fn cleanup_workspace_at_tolerates_a_workspace_that_does_not_exist() {
         let dir = tempdir().expect("tempdir");
-        let workspace = Workspace::new(dir.path().join("never-created"));
+        let workspace = Workspace::new(dir.path().join("vault-sync"));
         cleanup_workspace_at(&workspace);
-        assert!(!dir.path().join("never-created").exists());
+        assert!(!dir.path().join("vault-sync").exists());
+    }
+
+    #[test]
+    fn cleanup_workspace_at_leaves_a_folder_that_is_not_the_vault_sync_workspace_alone() {
+        let dir = tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("keep.txt"), "x").unwrap();
+        let workspace = Workspace::new(dir.path().to_path_buf());
+
+        cleanup_workspace_at(&workspace);
+
+        assert!(dir.path().join("keep.txt").exists());
     }
 }

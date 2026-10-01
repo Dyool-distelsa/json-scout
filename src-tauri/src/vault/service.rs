@@ -283,10 +283,12 @@ mod tests {
     #[test]
     fn list_propagates_a_local_state_error_that_is_not_an_invalid_name() {
         let provider = FakeProvider::new().with_listing(&[("broken", true)]);
-        let (dir, svc) = service(provider);
+        let (dir, svc) = service(provider.with_value("broken", r#"{"a":1}"#, "v1"));
+        svc.pull("kv", "broken").unwrap();
         // A directory where the base copy should be a file: reading it fails
         // with something other than "not found", so the state is unknowable.
         let unreadable = dir.path().join("vault-sync").join("kv").join(".base").join("broken.json");
+        fs::remove_file(&unreadable).unwrap();
         fs::create_dir_all(&unreadable).unwrap();
 
         assert!(matches!(svc.list("kv"), Err(VaultError::Io(_))));

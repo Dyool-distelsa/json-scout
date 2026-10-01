@@ -90,12 +90,19 @@ environment colours, a settings toggle for workspace cleanup.
       (60s default). On Windows a timeout runs `taskkill /T /F` on the whole
       process tree, so the Python child of `az.cmd` does not survive. 118 Rust
       tests pass (up from 103), and each item was observed RED before GREEN.
-- [ ] T5 — Frontend Vault tab: vault input with recent vaults, Load, secret
+- [x] T5 — Frontend Vault tab: vault input with recent vaults, Load, secret
       search, local-state badges, Pull opens the file via `loadFileFromDisk`,
       `not_signed_in` → "Run `az login` and retry", disabled message outside
       Tauri. Re-pulling a `modified` secret asks for confirmation first (review
       advisory R3-pull-overwrites-modified). Pure helpers (filter,
       recent-vaults list, error message mapping) are unit tested.
+      Done: `src/ui/vaultModel.js` (+42 tests, observed RED 30 failed →
+      GREEN), `src/ui/vaultPanel.js`, a tab in `index.html`, wiring in
+      `main.js` (`loadFileFromDisk` now returns a boolean), and styles.
+      Pulling a `clean` row first re-lists, so edits saved since the last
+      listing still trigger the confirmation. That costs one extra `az` call.
+      Tab padding shrank so 7 tabs fit in 320px; this is unmeasured, so check
+      it in T6. 352 JS tests pass and the build is green.
 - [ ] T6 — Manual smoke check against a real vault (list, search, pull, edit);
       record per-vault read access findings here. Also verify that a second
       launch (e.g. "Open with") does not wipe the running instance's
@@ -179,4 +186,6 @@ Branch: `feat/vault-sync` from `main` (09ee339). First reviewed boundary: 09ee33
   `feat/vault-sync`.
 
 ## Next step
-T5 (frontend) on `feat/vault-sync-ui`.
+Review the T5 commit, then T6. T6 is the user's manual smoke check and also
+covers the tab-bar fit at 320px and 260px in both themes, plus pulling a
+`text`-format secret.

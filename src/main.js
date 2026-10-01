@@ -6,6 +6,7 @@ import { createSidebar } from './ui/sidebar.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
+import { createVaultPanel } from './ui/vaultPanel.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
 import { flashEditor } from './ui/feedback.js';
@@ -65,6 +66,13 @@ const rightPanel = initRightPanel({
 });
 
 createSettingsPanel(document.getElementById('panel-settings'), (msg, kind) => toast.showToast(msg, kind));
+
+createVaultPanel(document.getElementById('panel-vault'), {
+  invoke: tauriInvoke,
+  openFile: loadFileFromDisk,
+  notify: (msg, kind) => toast.showToast(msg, kind),
+  isTauri: isTauriRuntime(),
+});
 
 const sidebar = createSidebar(document.getElementById('sidebar-list'), async (name) => {
   if (!state.currentDir) return;
@@ -453,6 +461,11 @@ function openFileFallback() {
   input.click();
 }
 
+/**
+ * @param {string} path
+ * @returns {Promise<boolean>} whether the file was opened (a failure has
+ *   already surfaced its own error toast).
+ */
 async function loadFileFromDisk(path) {
   try {
     const contents = await tauriInvoke('read_json_file', { path });
@@ -461,8 +474,10 @@ async function loadFileFromDisk(path) {
     updateFileName(path);
     sidebar.setActive(path.split(/[\\/]/).pop());
     toast.dismissToastsByVariant('error');
+    return true;
   } catch (err) {
     toast.showToast(`Could not open ${path}: ${err}`, 'error');
+    return false;
   }
 }
 

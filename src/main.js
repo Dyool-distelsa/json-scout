@@ -7,6 +7,7 @@ import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
 import { createVaultPanel } from './ui/vaultPanel.js';
+import { installCloseGuard } from './ui/closeGuard.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
 import { flashEditor } from './ui/feedback.js';
@@ -88,6 +89,16 @@ const vaultPanel = createVaultPanel(document.getElementById('sidebar-vault'), {
   notify: (msg, kind) => toast.showToast(msg, kind),
   isTauri: isTauriRuntime(),
 });
+
+// Closing discards the pulled workspace, so ask first when a secret has
+// unpushed edits. Independent of the Vault plugin switch: the files exist either way.
+if (isTauriRuntime()) {
+  installCloseGuard({
+    invoke: tauriInvoke,
+    getWindow: async () => (await import('@tauri-apps/api/window')).getCurrentWindow(),
+    notify: (msg, kind) => toast.showToast(msg, kind),
+  });
+}
 
 const sidebar = createSidebar(document.getElementById('sidebar-list'), async (name) => {
   if (!state.currentDir) return;

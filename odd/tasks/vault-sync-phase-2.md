@@ -159,9 +159,18 @@ compare, and creating or deleting secrets.
       mutating the mask, typed gate, double-submit guard, overwrite flag, Escape
       guard and the panel guards in turn made tests fail (one panel lock mutation
       survives because the earlier render already locks the buttons).
-- [ ] P7 — Close guard (decision A): intercept the close request; if any
+- [x] P7 — Close guard (decision A): intercept the close request; if any
       secret is `modified`, ask before discarding. Tested in jsdom and in a pure
       model.
+      Done: `ui/closeGuard.js` (`closeDecision`, `askDiscardOnClose`,
+      `installCloseGuard`; 26 tests) wired in `main.js` whenever the app runs
+      in Tauri, independent of the Vault plugin switch. A failed
+      `vault_local_changes` asks anyway with a generic message; a failure of the
+      guard itself lets the close go ahead rather than trapping the user.
+      Capability added: `core:window:allow-destroy` only, because the window API
+      destroys the window itself after a handler that did not prevent the close
+      (`onCloseRequested` needs nothing beyond `core:event:default`). RED: stubs
+      first (26 failures), then 9 mutations of the guard, all caught.
 
 ## Route per task
 | Task | Route | Trigger evidence |
@@ -197,6 +206,8 @@ batch with the user's consent. Nothing is pushed until the user says so.
 ## Progress
 - Branch `feat/vault-push` created from `feat/vault-plugin-menu` (d53d370).
 - Backend batch P2–P5 done, one commit per task. Rust 126 -> 241 tests.
+- Review fixes P5b (overwrite over an unseen version, atomic gate) done: 252 Rust tests.
+- Frontend batch P1, P6, P7 done, one commit per task. JS 469 -> 610 tests.
 
 ## Frontend contract (for P6/P7)
 Errors are `{ kind, message }`; the new kinds are `not_pulled`, `invalid_json`,
@@ -216,4 +227,6 @@ Errors are `{ kind, message }`; the new kinds are `not_pulled`, `invalid_json`,
   secret.
 
 ## Next step
-Frontend batch, P1, P6, P7.
+Review of the frontend batch (RDD with the user's consent), then a visual check
+of the push dialog and the close guard in the real app, and a manual push to a
+throwaway dev secret. Nothing is pushed or delivered until the user says so.

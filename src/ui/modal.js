@@ -140,10 +140,11 @@ export function openModal({
     close,
   };
 
+  // Attach first: if that throws, nothing is left registered.
+  document.body.appendChild(backdrop);
   stack.push(handle);
   document.addEventListener('keydown', onKeydown, true);
   document.addEventListener('focusin', onFocusin, true);
-  document.body.appendChild(backdrop);
   dialog.focus();
   return handle;
 }

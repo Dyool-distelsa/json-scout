@@ -13,8 +13,8 @@
 //! is built, which also rules out path traversal.
 
 use super::domain::{validate_name, SecretValue, VaultError};
+use super::json_text;
 use serde::Serialize;
-use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -67,49 +67,24 @@ pub struct Pulled {
 
 /// Turn a raw secret value into its stored form.
 ///
-/// A value that parses as a JSON object or array is stored as `json`, with
-/// keys sorted recursively and 2-space indentation plus a trailing newline.
-/// Anything else (including JSON scalars such as `123` or `true`, which are
-/// indistinguishable from plain passwords) is stored verbatim as `text`.
+/// A value that is a JSON object or array is stored as `json`, re-indented by
+/// the lossless formatter: 2-space indentation and a trailing newline, with
+/// every number and string lexeme and the key order exactly as the remote
+/// wrote them (keys are not sorted, duplicate keys are kept). Anything else
+/// (including JSON scalars such as `123` or `true`, which are
+/// indistinguishable from plain passwords, and text that is not valid JSON)
+/// is stored verbatim as `text`.
 pub fn normalise(value: &str) -> Normalised {
-    let verbatim = || Normalised {
-        text: value.to_string(),
-        format: Format::Text,
-    };
-    match serde_json::from_str::<Value>(value) {
-        Ok(parsed @ (Value::Object(_) | Value::Array(_))) => {
-            match serde_json::to_string_pretty(&sort_keys(parsed)) {
-                Ok(mut text) => {
-                    text.push('\n');
-                    Normalised {
-                        text,
-                        format: Format::Json,
-                    }
-                }
-                Err(_) => verbatim(),
-            }
-        }
-        _ => verbatim(),
-    }
-}
-
-/// Rebuild every object with its keys in sorted order. Entries are inserted
-/// in sorted order, so the result is sorted whether `serde_json` backs its
-/// maps with a `BTreeMap` or (with `preserve_order`) an insertion-ordered map.
-fn sort_keys(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(key, child)| (key, sort_keys(child)))
-                    .collect(),
-            )
-        }
-        Value::Array(items) => Value::Array(items.into_iter().map(sort_keys).collect()),
-        scalar => scalar,
+    let is_container = value.trim_start().starts_with(['{', '[']);
+    match json_text::pretty(value) {
+        Ok(text) if is_container => Normalised {
+            text,
+            format: Format::Json,
+        },
+        _ => Normalised {
+            text: value.to_string(),
+            format: Format::Text,
+        },
     }
 }
 
@@ -254,7 +229,7 @@ fn remove_if_present(path: &Path) -> Result<(), VaultError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use tempfile::tempdir;
 
     fn secret(value: &str, version: &str) -> SecretValue {
@@ -274,11 +249,34 @@ mod tests {
     // --- normalise ---
 
     #[test]
-    fn normalise_sorts_object_keys_recursively_with_two_space_indent_and_a_trailing_newline() {
+    fn normalise_keeps_key_order_with_two_space_indent_and_a_trailing_newline() {
         let n = normalise(r#"{"b":1,"a":{"z":true,"y":[{"d":1,"c":2}]}}"#);
         assert_eq!(n.format, Format::Json);
-        let expected = "{\n  \"a\": {\n    \"y\": [\n      {\n        \"c\": 2,\n        \"d\": 1\n      }\n    ],\n    \"z\": true\n  },\n  \"b\": 1\n}\n";
+        let expected = "{\n  \"b\": 1,\n  \"a\": {\n    \"z\": true,\n    \"y\": [\n      {\n        \"d\": 1,\n        \"c\": 2\n      }\n    ]\n  }\n}\n";
         assert_eq!(n.text, expected);
+    }
+
+    #[test]
+    fn normalise_keeps_number_and_string_lexemes_exactly_as_the_remote_wrote_them() {
+        let n = normalise(r#"{"a":1.50,"b":1e3,"c":12345678901234567890,"d":"é","e":-0}"#);
+        assert_eq!(n.format, Format::Json);
+        for lexeme in ["1.50", "1e3", "12345678901234567890", r#""é""#, "-0"] {
+            assert!(n.text.contains(lexeme), "{lexeme} must survive: {}", n.text);
+        }
+    }
+
+    #[test]
+    fn normalise_keeps_every_member_of_an_object_with_duplicate_keys() {
+        let n = normalise(r#"{"a":1,"a":2}"#);
+        assert_eq!(n.format, Format::Json);
+        assert_eq!(n.text, "{\n  \"a\": 1,\n  \"a\": 2\n}\n");
+    }
+
+    #[test]
+    fn normalise_then_minify_reproduces_a_minified_remote_value_byte_for_byte() {
+        let remote = r#"{"b":1.50,"a":[1e3,{"k":"é","k":null}],"n":12345678901234567890}"#;
+        let n = normalise(remote);
+        assert_eq!(crate::vault::json_text::minify(&n.text).unwrap(), remote);
     }
 
     #[test]
@@ -322,7 +320,7 @@ mod tests {
             .write_pull("kv", "app-config", &secret(r#"{"b":1,"a":2}"#, "v1"))
             .expect("pull");
 
-        let expected_text = "{\n  \"a\": 2,\n  \"b\": 1\n}\n";
+        let expected_text = "{\n  \"b\": 1,\n  \"a\": 2\n}\n";
         assert_eq!(pulled.format, Format::Json);
         assert_eq!(pulled.path, ws.root().join("kv").join("app-config.json"));
         assert_eq!(fs::read_to_string(&pulled.path).unwrap(), expected_text);

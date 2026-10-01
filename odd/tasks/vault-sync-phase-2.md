@@ -74,12 +74,18 @@ compare, and creating or deleting secrets.
 - Existing tests must keep passing (469 JS, 126 Rust at branch start).
 
 ## Tasks
-- [ ] P1 — jsdom dev dependency. DOM tests for the existing vault panel: the
+- [x] P1 — jsdom dev dependency. DOM tests for the existing vault panel: the
       overwrite guards (modified confirmation, clean re-list), the busy guard,
       the lifecycle (activate/deactivate, stale status discarded, no calls while
       hidden) and the `loadFileFromDisk` boolean contract. These are
       characterisation tests of shipped behaviour, so RED is shown by
       temporarily breaking the guarded line.
+      Done: `jsdom` (dev) opted in per file with `// @vitest-environment jsdom`;
+      the default environment stays `node` and the existing `ui/**/*.test.js`
+      glob already collects `vaultPanel.dom.test.js`. Shared fakes live in
+      `ui/testing/fakeBackend.js` (`createFakeInvoke`, `deferred`, `settle`). 17
+      tests; breaking each of 11 guarded lines one at a time made 1 to 4 of them
+      fail on assertions, and the panel source was restored afterwards.
 - [x] P2 — Lossless JSON formatter and minifier in Rust (tokenizer that keeps
       lexemes and key order, reports duplicates). It replaces the
       `serde_json::Value` path in `normalise`. Pull and push round-trip tests,

@@ -142,11 +142,23 @@ compare, and creating or deleting secrets.
       service tests failed on assertions (two overwrite cases, one racing push
       that wrote twice) and 7 gate tests failed against a stubbed `take`. 252
       Rust tests pass (+11).
-- [ ] P6 — Frontend push flow: a Push action on modified rows, a diff view
+- [x] P6 — Frontend push flow: a Push action on modified rows, a diff view
       (added, removed and changed keys with masked values and reveal), the
       confirm dialog with the environment header and typed confirmation for
       prod/unknown, the conflict path (Re-pull / Overwrite anyway) and a
       success toast with the short new version.
+      Done: pure helpers in `ui/vaultPush.js` (34 tests), `ui/modal.js`
+      (accessible modal: focus trap, Escape, focus return, stacking; 14 DOM
+      tests), `ui/vaultPushDialog.js` (32 DOM tests) and the panel wiring (15 DOM
+      tests); `errorMessage` knows the new kinds. The diff reuses `diffJson` and
+      `describeDiff`. Values exist in the DOM only after "Reveal values" and
+      never in attributes. Beyond the brief: a conflict or `preview_required`
+      answer to a push turns into "Review again" (a fresh preview), because the
+      overwrite rule from P5b needs the user to look at the new remote. RED: the
+      pure helpers and the dialog ran against stubs first (34 and 29 failures);
+      mutating the mask, typed gate, double-submit guard, overwrite flag, Escape
+      guard and the panel guards in turn made tests fail (one panel lock mutation
+      survives because the earlier render already locks the buttons).
 - [ ] P7 — Close guard (decision A): intercept the close request; if any
       secret is `modified`, ask before discarding. Tested in jsdom and in a pure
       model.

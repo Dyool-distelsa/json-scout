@@ -13,6 +13,9 @@ import {
   isSignedOutError,
   SESSION_EXPIRED_MESSAGE,
 } from './vaultModel.js';
+import { el, button } from './dom.js';
+import { openPushDialog } from './vaultPushDialog.js';
+import { pushSuccessMessage } from './vaultPush.js';
 
 const RECENT_STORAGE_KEY = 'json-scout.vault.recent';
 const INVALID_NAME_MESSAGE =
@@ -22,20 +25,6 @@ const BADGE_TITLES = {
   clean: 'Pulled, no local edits',
   modified: 'Pulled, edited locally',
 };
-
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function button(label, className, onClick) {
-  const node = el('button', className, label);
-  node.type = 'button';
-  node.addEventListener('click', onClick);
-  return node;
-}
 
 function readRecentVaults() {
   try {
@@ -55,10 +44,12 @@ function writeRecentVaults(list) {
 
 /**
  * Render the Vault panel: check the Azure session (offering a sign-in when
- * there is none), then load an Azure Key Vault by name, search its secrets
- * and pull one into the editor. Read-only: nothing here can write to a
- * vault. Secret values and CLI output are never rendered, only names, local
- * state and fixed or backend-summarised messages. Outside the Tauri shell the
+ * there is none), then load an Azure Key Vault by name, search its secrets,
+ * pull one into the editor and push an edited one back. A push always goes
+ * through a review dialog (see vaultPushDialog.js), and the backend refuses
+ * one that was not previewed. Secret values and CLI output are never
+ * rendered by the panel, only names, local state and fixed or
+ * backend-summarised messages; the dialog shows values only on request. Outside the Tauri shell the
  * panel shows a disabled explanation and never invokes a command.
  *
  * The panel is idle until `activate()` (its tab is shown); `deactivate()`
@@ -92,7 +83,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     vault: null, // vault the current list belongs to (not the input's live value)
     items: [],
     query: '',
-    busy: null, // null | { kind: 'load' } | { kind: 'pull', name }
+    busy: null, // null | { kind: 'load' } | { kind: 'pull'|'push-preview'|'push', name }
     confirmName: null,
     recent: readRecentVaults(),
     message: null, // { text, kind: 'error' | 'info' }
@@ -224,8 +215,21 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     pullButton.addEventListener('click', () => requestPull(item));
     row.appendChild(pullButton);
 
+    let pushButton = null;
+    if (item.localState === 'modified') {
+      const isPreviewing = state.busy?.kind === 'push-preview' && state.busy.name === item.name;
+      pushButton = el('button', 'vault-btn vault-row__action', isPreviewing ? 'Checking…' : 'Push');
+      pushButton.type = 'button';
+      pushButton.disabled = state.busy !== null;
+      pushButton.setAttribute('aria-label', `Push ${item.name}`);
+      pushButton.addEventListener('click', () => requestPush(item));
+      row.appendChild(pushButton);
+      focusTargets?.set(`${item.name}:push`, pushButton);
+    }
+
     if (state.confirmName === item.name && !isPulling) {
       pullButton.hidden = true;
+      if (pushButton) pushButton.hidden = true;
       const confirm = el('div', 'vault-confirm');
       confirm.setAttribute('role', 'group');
       confirm.setAttribute('aria-label', `Confirm discarding local edits to ${item.name}`);
@@ -446,6 +450,67 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
           : rowFocusTargets.get(item.name);
       target?.focus();
     }
+  }
+
+  /**
+   * Entry point for a click on Push: ask the backend for a preview (it checks
+   * the JSON, compares with the base and looks at the vault), then let the user
+   * review it. Nothing is written until the dialog's own confirmation.
+   */
+  async function requestPush(item) {
+    if (state.busy) return;
+    const vault = state.vault;
+    const name = item.name;
+    const focusRow = () => (rowFocusTargets.get(`${name}:push`) ?? rowFocusTargets.get(name))?.focus();
+    state.busy = { kind: 'push-preview', name };
+    setMessage(null);
+    render();
+    let preview;
+    try {
+      preview = await invoke('vault_push_preview', { vault, name });
+    } catch (err) {
+      state.busy = null;
+      handleCallError(err);
+      render();
+      focusRow();
+      return;
+    }
+    state.busy = null;
+    // Hidden meanwhile: do not raise a dialog over whatever the user moved to.
+    if (!state.active || state.vault !== vault) {
+      render();
+      return;
+    }
+    if (preview?.changed !== true) {
+      render();
+      notify?.('No changes to push', 'info');
+      focusRow();
+      return;
+    }
+    // The panel stays locked for as long as the dialog is open.
+    state.busy = { kind: 'push', name };
+    render();
+    openPushDialog({
+      vault,
+      name,
+      preview,
+      invoke,
+      restoreFocus: () => rowFocusTargets.get(`${name}:push`),
+      onClosed: () => {
+        state.busy = null;
+        render();
+        focusRow();
+      },
+      onPushed: ({ newVersion }) => {
+        const current = state.items.find((entry) => entry.name === name);
+        if (current) current.localState = 'clean';
+        notify?.(pushSuccessMessage(name, newVersion), 'success');
+        render();
+        rowFocusTargets.get(name)?.focus();
+      },
+      // The secret is modified, so this asks before discarding the edits.
+      onRepull: () => requestPull(state.items.find((entry) => entry.name === name) ?? item),
+    });
   }
 
   authButton.addEventListener('click', () => {

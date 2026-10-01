@@ -81,6 +81,11 @@ export function parseRecentVaults(raw, max = MAX_RECENT_VAULTS) {
   return result.slice(0, Math.max(0, max));
 }
 
+function backendText(err) {
+  const message = err?.message;
+  return typeof message === 'string' && message !== '' ? message : null;
+}
+
 /**
  * Turn a rejected backend call into user-facing text. Backend errors are
  * `{ kind, message }`; a plain string or an Error is tolerated too.
@@ -97,9 +102,25 @@ export function errorMessage(err) {
     case 'az_missing':
       return 'Azure CLI (az) not found. Install it, make sure it is on your PATH, then retry.';
     case 'forbidden':
-      return 'You do not have read access to this vault or secret.';
+      return 'You do not have access to read or write this vault or secret.';
     case 'timeout':
       return 'The Azure CLI took too long to respond. Retry in a moment.';
+    case 'not_pulled':
+      return 'This secret has no local working copy. Pull it before pushing.';
+    case 'no_changes':
+      return 'There are no changes to push.';
+    case 'preview_required':
+      return 'The preview is out of date. Review the changes again before pushing.';
+    case 'conflict':
+      return "The secret changed in Azure after you pulled it. Re-pull it, or overwrite the vault's version.";
+    // These two carry the line and column in the backend text, never the value.
+    case 'invalid_json':
+      return backendText(err) ?? 'The working copy is not valid JSON. Fix it and try again.';
+    case 'duplicate_keys':
+      return (
+        backendText(err) ??
+        'The JSON repeats a key in the same object. Remove the duplicate and try again.'
+      );
     default: {
       const message = err?.message;
       return typeof message === 'string' && message !== '' ? message : GENERIC_ERROR_MESSAGE;

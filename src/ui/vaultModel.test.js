@@ -1,0 +1,228 @@
+import { describe, it, expect } from 'vitest';
+import {
+  MAX_RECENT_VAULTS,
+  filterSecrets,
+  isValidVaultName,
+  rememberVault,
+  parseRecentVaults,
+  errorMessage,
+  needsPullConfirmation,
+} from './vaultModel.js';
+
+const item = (name, localState = 'remote', enabled = true) => ({ name, enabled, localState });
+
+describe('filterSecrets', () => {
+  const items = [item('App-Config'), item('db-password'), item('APP-secret'), item('queue')];
+
+  it('returns every item for an empty query', () => {
+    expect(filterSecrets(items, '')).toEqual(items);
+  });
+
+  it('treats a whitespace-only query as empty', () => {
+    expect(filterSecrets(items, '   ')).toEqual(items);
+  });
+
+  it('matches a case-insensitive substring', () => {
+    expect(filterSecrets(items, 'app').map((i) => i.name)).toEqual(['App-Config', 'APP-secret']);
+  });
+
+  it('matches in the middle of a name', () => {
+    expect(filterSecrets(items, 'PASS').map((i) => i.name)).toEqual(['db-password']);
+  });
+
+  it('keeps the original order', () => {
+    expect(filterSecrets(items, '-').map((i) => i.name)).toEqual(['App-Config', 'db-password', 'APP-secret']);
+  });
+
+  it('trims the query before matching', () => {
+    expect(filterSecrets(items, '  queue ').map((i) => i.name)).toEqual(['queue']);
+  });
+
+  it('returns an empty list when nothing matches', () => {
+    expect(filterSecrets(items, 'zzz')).toEqual([]);
+  });
+
+  it('does not mutate the input and returns a new array', () => {
+    const copy = [...items];
+    const result = filterSecrets(items, '');
+    expect(items).toEqual(copy);
+    expect(result).not.toBe(items);
+  });
+
+  it('tolerates a non-array input and a non-string query', () => {
+    expect(filterSecrets(null, 'a')).toEqual([]);
+    expect(filterSecrets(undefined, 'a')).toEqual([]);
+    expect(filterSecrets(items, undefined)).toEqual(items);
+  });
+
+  it('skips entries without a string name', () => {
+    expect(filterSecrets([{ enabled: true }, null, item('abc')], 'a').map((i) => i.name)).toEqual(['abc']);
+  });
+});
+
+describe('isValidVaultName', () => {
+  it('accepts alphanumerics and inner hyphens', () => {
+    expect(isValidVaultName('kv-prod-01')).toBe(true);
+    expect(isValidVaultName('A')).toBe(true);
+    expect(isValidVaultName('9lives')).toBe(true);
+  });
+
+  it('rejects an empty name', () => {
+    expect(isValidVaultName('')).toBe(false);
+  });
+
+  it('rejects a leading hyphen', () => {
+    expect(isValidVaultName('-kv')).toBe(false);
+  });
+
+  it('accepts a trailing hyphen, matching the backend rule', () => {
+    expect(isValidVaultName('kv-')).toBe(true);
+  });
+
+  it('enforces the 127 character boundary', () => {
+    expect(isValidVaultName('a'.repeat(127))).toBe(true);
+    expect(isValidVaultName('a'.repeat(128))).toBe(false);
+  });
+
+  it('rejects shell metacharacters, spaces, dots and underscores', () => {
+    for (const bad of ['kv name', 'kv;rm', 'kv&x', 'kv.vault', 'kv_x', 'kv/x', 'kv\\x', '$(x)', 'kv\n']) {
+      expect(isValidVaultName(bad)).toBe(false);
+    }
+  });
+
+  it('rejects non-ASCII letters', () => {
+    expect(isValidVaultName('kvé')).toBe(false);
+  });
+
+  it('rejects non-strings', () => {
+    expect(isValidVaultName(null)).toBe(false);
+    expect(isValidVaultName(undefined)).toBe(false);
+    expect(isValidVaultName(42)).toBe(false);
+  });
+});
+
+describe('rememberVault', () => {
+  it('puts the newest vault first', () => {
+    expect(rememberVault(['a', 'b'], 'c', 5)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('moves an existing vault to the front without duplicating it', () => {
+    expect(rememberVault(['a', 'b', 'c'], 'b', 5)).toEqual(['b', 'a', 'c']);
+  });
+
+  it('dedupes case-insensitively and keeps the newest casing', () => {
+    expect(rememberVault(['Alpha', 'b'], 'alpha', 5)).toEqual(['alpha', 'b']);
+  });
+
+  it('bounds the list to max entries, dropping the oldest', () => {
+    expect(rememberVault(['a', 'b', 'c'], 'd', 3)).toEqual(['d', 'a', 'b']);
+  });
+
+  it('ignores an invalid name', () => {
+    expect(rememberVault(['a'], '-bad', 5)).toEqual(['a']);
+    expect(rememberVault(['a'], '', 5)).toEqual(['a']);
+    expect(rememberVault(['a'], null, 5)).toEqual(['a']);
+  });
+
+  it('does not mutate the input list', () => {
+    const list = ['a', 'b'];
+    rememberVault(list, 'c', 5);
+    expect(list).toEqual(['a', 'b']);
+  });
+
+  it('tolerates a non-array list', () => {
+    expect(rememberVault(null, 'a', 5)).toEqual(['a']);
+    expect(rememberVault(undefined, 'a', 5)).toEqual(['a']);
+  });
+
+  it('uses a sensible default bound', () => {
+    expect(MAX_RECENT_VAULTS).toBeGreaterThan(0);
+    const many = Array.from({ length: MAX_RECENT_VAULTS + 5 }, (_, i) => `kv${i}`);
+    expect(rememberVault(many, 'fresh').length).toBe(MAX_RECENT_VAULTS);
+    expect(rememberVault(many, 'fresh')[0]).toBe('fresh');
+  });
+
+  it('returns an empty list for a non-positive max', () => {
+    expect(rememberVault(['a'], 'b', 0)).toEqual([]);
+  });
+});
+
+describe('parseRecentVaults', () => {
+  it('parses a JSON array of valid names', () => {
+    expect(parseRecentVaults('["a","b"]')).toEqual(['a', 'b']);
+  });
+
+  it('returns an empty list for null, empty or malformed input', () => {
+    expect(parseRecentVaults(null)).toEqual([]);
+    expect(parseRecentVaults('')).toEqual([]);
+    expect(parseRecentVaults('{oops')).toEqual([]);
+    expect(parseRecentVaults('{"a":1}')).toEqual([]);
+  });
+
+  it('drops invalid entries and duplicates', () => {
+    expect(parseRecentVaults('["a","-bad",42,null,"A","b"]')).toEqual(['a', 'b']);
+  });
+
+  it('bounds the result', () => {
+    const raw = JSON.stringify(Array.from({ length: MAX_RECENT_VAULTS + 3 }, (_, i) => `kv${i}`));
+    expect(parseRecentVaults(raw)).toHaveLength(MAX_RECENT_VAULTS);
+  });
+});
+
+describe('errorMessage', () => {
+  it('maps not_signed_in to the az login instruction', () => {
+    expect(errorMessage({ kind: 'not_signed_in', message: 'raw' })).toBe(
+      'Not signed in to Azure. Run `az login` and retry.'
+    );
+  });
+
+  it('maps az_missing to an install hint', () => {
+    expect(errorMessage({ kind: 'az_missing', message: 'raw' })).toMatch(/Azure CLI.*not found/i);
+  });
+
+  it('maps forbidden to a read-access message', () => {
+    expect(errorMessage({ kind: 'forbidden', message: 'raw' })).toMatch(/read access/i);
+  });
+
+  it('maps timeout to a retry message', () => {
+    expect(errorMessage({ kind: 'timeout', message: 'raw' })).toMatch(/retry/i);
+  });
+
+  it('uses the backend message for other kinds', () => {
+    for (const kind of ['not_found', 'invalid_name', 'parse', 'io', 'cli', 'internal']) {
+      expect(errorMessage({ kind, message: `backend ${kind}` })).toBe(`backend ${kind}`);
+    }
+  });
+
+  it('uses the backend message for an unknown kind', () => {
+    expect(errorMessage({ kind: 'brand_new', message: 'something' })).toBe('something');
+  });
+
+  it('accepts a plain string', () => {
+    expect(errorMessage('boom')).toBe('boom');
+  });
+
+  it('accepts an Error instance', () => {
+    expect(errorMessage(new Error('bad'))).toBe('bad');
+  });
+
+  it('falls back to a generic message for unknown shapes', () => {
+    for (const bad of [null, undefined, 42, {}, { kind: 'cli' }, { kind: 'cli', message: '' }, '']) {
+      expect(errorMessage(bad)).toBe('Vault request failed.');
+    }
+  });
+});
+
+describe('needsPullConfirmation', () => {
+  it('is true only for a modified secret', () => {
+    expect(needsPullConfirmation(item('a', 'modified'))).toBe(true);
+    expect(needsPullConfirmation(item('a', 'clean'))).toBe(false);
+    expect(needsPullConfirmation(item('a', 'remote'))).toBe(false);
+  });
+
+  it('is false for missing or malformed items', () => {
+    expect(needsPullConfirmation(null)).toBe(false);
+    expect(needsPullConfirmation(undefined)).toBe(false);
+    expect(needsPullConfirmation({})).toBe(false);
+  });
+});

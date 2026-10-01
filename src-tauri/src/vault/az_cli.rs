@@ -1,9 +1,10 @@
 //! Azure CLI adapter for the read-only [`SecretProvider`] port.
 //!
 //! The adapter never builds a shell string: it hands a program name and an
-//! argument array to an injected [`CommandRunner`]. Only read operations
-//! exist here (account show, secret list, secret show), and every vault and
-//! secret name is validated before it can reach an argument.
+//! argument array to an injected [`CommandRunner`]. Secret operations are
+//! read-only (secret list, secret show); the only other calls are the account
+//! lookup and the interactive `az login`. Every vault and secret name is
+//! validated before it can reach an argument.
 //!
 //! Error values are built from fixed text or a short first line of stderr;
 //! stdout (which carries secret values) is never copied into an error.
@@ -21,6 +22,9 @@ const MAX_SUMMARY_CHARS: usize = 300;
 
 /// Upper bound on one `az` invocation.
 pub const AZ_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Upper bound on `az login`, which waits for the user in a browser window.
+pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// How often a running child is checked against its deadline.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -49,7 +53,17 @@ pub struct CmdOutput {
 /// Runs a program with an argument array. `Err` means the process could not
 /// be spawned at all; a non-zero exit is reported through `status_ok`.
 pub trait CommandRunner: Send + Sync {
+    /// Run with the runner's own default timeout.
     fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput>;
+
+    /// Run with an explicit timeout, for the one call (an interactive
+    /// sign-in) that legitimately outlasts the default.
+    fn run_with_timeout(
+        &self,
+        program: &str,
+        args: &[String],
+        timeout: Duration,
+    ) -> io::Result<CmdOutput>;
 }
 
 /// Spawns real processes with `std::process::Command` (argument array, no
@@ -71,11 +85,20 @@ impl Default for SystemRunner {
 }
 
 impl CommandRunner for SystemRunner {
+    fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput> {
+        self.run_with_timeout(program, args, self.timeout)
+    }
+
     /// Runs `program`, draining both pipes on reader threads so a large
     /// output cannot fill a pipe buffer and stall the child. If the child is
     /// still running when the timeout expires it is killed and reaped, and
     /// the call fails with [`io::ErrorKind::TimedOut`].
-    fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput> {
+    fn run_with_timeout(
+        &self,
+        program: &str,
+        args: &[String],
+        timeout: Duration,
+    ) -> io::Result<CmdOutput> {
         let mut command = std::process::Command::new(program);
         command
             .args(args)
@@ -93,7 +116,7 @@ impl CommandRunner for SystemRunner {
             command.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let deadline = Instant::now() + self.timeout;
+        let deadline = Instant::now() + timeout;
         let mut child = command.spawn()?;
         let (Some(stdout_pipe), Some(stderr_pipe)) = (child.stdout.take(), child.stderr.take())
         else {
@@ -190,9 +213,15 @@ impl<R: CommandRunner> AzCliProvider<R> {
         AzCliProvider { runner }
     }
 
-    /// Run `az` with `args` and parse its stdout as JSON.
-    fn run_json(&self, args: Vec<String>) -> Result<Value, VaultError> {
-        let output = match self.runner.run(az_program(), &args) {
+    /// Run `az` and return its output of a successful exit; a spawn failure
+    /// or a non-zero exit is mapped to a [`VaultError`]. `timeout` overrides
+    /// the runner's default when given.
+    fn execute(&self, args: &[String], timeout: Option<Duration>) -> Result<CmdOutput, VaultError> {
+        let result = match timeout {
+            Some(timeout) => self.runner.run_with_timeout(az_program(), args, timeout),
+            None => self.runner.run(az_program(), args),
+        };
+        let output = match result {
             Ok(output) => output,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Err(VaultError::AzMissing),
             Err(err) if err.kind() == io::ErrorKind::TimedOut => return Err(VaultError::Timeout),
@@ -201,6 +230,12 @@ impl<R: CommandRunner> AzCliProvider<R> {
         if !output.status_ok {
             return Err(map_failure(&output.stderr));
         }
+        Ok(output)
+    }
+
+    /// Run `az` with `args` and parse its stdout as JSON.
+    fn run_json(&self, args: Vec<String>) -> Result<Value, VaultError> {
+        let output = self.execute(&args, None)?;
         // The serde_json error text can quote the offending input, which may
         // hold a secret value, so it is deliberately dropped.
         // Strict decoding: a lossy one would silently rewrite secret bytes.
@@ -247,6 +282,14 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
                 })
             })
             .collect()
+    }
+
+    fn login(&self) -> Result<Identity, VaultError> {
+        // `-o none` keeps stdout empty; whatever it prints (an account
+        // listing) is dropped unread. The CLI stores the session itself, and
+        // this app never sees a token.
+        self.execute(&to_args(&["login", "-o", "none"]), Some(LOGIN_TIMEOUT))?;
+        self.whoami()
     }
 
     fn get(&self, secret: &SecretRef) -> Result<SecretValue, VaultError> {
@@ -361,6 +404,8 @@ mod tests {
 
     struct FakeRunner {
         calls: Mutex<Vec<Call>>,
+        /// Timeout passed with each call: `None` for a plain `run`.
+        timeouts: Mutex<Vec<Option<Duration>>>,
         replies: Mutex<VecDeque<io::Result<CmdOutput>>>,
     }
 
@@ -368,26 +413,50 @@ mod tests {
         fn new(replies: Vec<io::Result<CmdOutput>>) -> Self {
             FakeRunner {
                 calls: Mutex::new(Vec::new()),
+                timeouts: Mutex::new(Vec::new()),
                 replies: Mutex::new(replies.into()),
             }
         }
 
-        fn calls(&self) -> Vec<Call> {
-            self.calls.lock().unwrap().clone()
-        }
-    }
-
-    impl CommandRunner for FakeRunner {
-        fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput> {
+        fn record(
+            &self,
+            program: &str,
+            args: &[String],
+            timeout: Option<Duration>,
+        ) -> io::Result<CmdOutput> {
             self.calls
                 .lock()
                 .unwrap()
                 .push((program.to_string(), args.to_vec()));
+            self.timeouts.lock().unwrap().push(timeout);
             self.replies
                 .lock()
                 .unwrap()
                 .pop_front()
                 .unwrap_or_else(|| Err(io::Error::other("no reply scripted")))
+        }
+
+        fn calls(&self) -> Vec<Call> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn timeouts(&self) -> Vec<Option<Duration>> {
+            self.timeouts.lock().unwrap().clone()
+        }
+    }
+
+    impl CommandRunner for FakeRunner {
+        fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput> {
+            self.record(program, args, None)
+        }
+
+        fn run_with_timeout(
+            &self,
+            program: &str,
+            args: &[String],
+            timeout: Duration,
+        ) -> io::Result<CmdOutput> {
+            self.record(program, args, Some(timeout))
         }
     }
 
@@ -513,6 +582,89 @@ mod tests {
     fn whoami_reports_a_parse_error_when_the_user_is_missing() {
         let p = provider(vec![ok(r#"{"id":"sub-id","name":"Dev"}"#)]);
         assert_eq!(p.whoami(), Err(VaultError::Parse));
+    }
+
+    // --- login ---
+
+    const ACCOUNT_JSON: &str =
+        r#"{"id":"sub-id","name":"Dev Subscription","user":{"name":"ana@example.com"}}"#;
+
+    #[test]
+    fn login_runs_az_login_quietly_with_the_long_timeout_then_reads_the_account() {
+        let p = provider(vec![ok(""), ok(ACCOUNT_JSON)]);
+
+        let identity = p.login().expect("login");
+
+        assert_eq!(identity.user, "ana@example.com");
+        assert_eq!(identity.subscription, "Dev Subscription");
+        assert_eq!(
+            p.runner.calls(),
+            vec![
+                (az_program().to_string(), strings(&["login", "-o", "none"])),
+                (
+                    az_program().to_string(),
+                    strings(&["account", "show", "-o", "json"])
+                ),
+            ]
+        );
+        // Only the interactive sign-in gets the long timeout.
+        assert_eq!(p.runner.timeouts(), vec![Some(LOGIN_TIMEOUT), None]);
+    }
+
+    #[test]
+    fn the_login_timeout_is_five_minutes_and_longer_than_the_default() {
+        assert_eq!(LOGIN_TIMEOUT, Duration::from_secs(300));
+        assert!(LOGIN_TIMEOUT > AZ_TIMEOUT);
+    }
+
+    #[test]
+    fn whoami_list_and_get_never_use_the_long_timeout() {
+        let p = provider(vec![ok(ACCOUNT_JSON), ok("[]"), ok(SHOW_OUTPUT)]);
+        p.whoami().unwrap();
+        p.list("kv").unwrap();
+        p.get(&secret_ref("kv", "app-config")).unwrap();
+        assert_eq!(p.runner.timeouts(), vec![None, None, None]);
+    }
+
+    #[test]
+    fn login_discards_what_az_login_prints_on_stdout() {
+        let noisy = r#"[{"user":{"name":"leaky-account-listing"}}]"#;
+        let p = provider(vec![ok(noisy), ok(ACCOUNT_JSON)]);
+        let identity = p.login().expect("login");
+        assert!(!format!("{identity:?}").contains("leaky"));
+
+        // A failed login must not copy stdout into the error either.
+        let failed = Ok(CmdOutput {
+            status_ok: false,
+            stdout: b"leaky-account-listing".to_vec(),
+            stderr: "ERROR: user cancelled".into(),
+        });
+        let err = provider(vec![failed]).login().unwrap_err();
+        assert_eq!(err, VaultError::Cli("user cancelled".into()));
+        assert!(!err.to_string().contains("leaky"));
+    }
+
+    #[test]
+    fn login_failures_map_like_every_other_call_and_skip_the_account_lookup() {
+        let timed_out = Err(io::Error::new(io::ErrorKind::TimedOut, "deadline exceeded"));
+        let p = provider(vec![timed_out]);
+        assert_eq!(p.login(), Err(VaultError::Timeout));
+        assert_eq!(p.runner.calls().len(), 1);
+
+        let missing = Err(io::Error::new(io::ErrorKind::NotFound, "program not found"));
+        assert_eq!(provider(vec![missing]).login(), Err(VaultError::AzMissing));
+
+        let denied = Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
+        assert!(matches!(provider(vec![denied]).login(), Err(VaultError::Io(_))));
+
+        let p = provider(vec![fail("ERROR: AADSTS50126: Invalid username or password.")]);
+        assert_eq!(p.login(), Err(VaultError::NotSignedIn));
+    }
+
+    #[test]
+    fn login_reports_the_error_of_the_account_lookup_that_follows() {
+        let p = provider(vec![ok(""), fail("ERROR: Please run 'az login' to setup account.")]);
+        assert_eq!(p.login(), Err(VaultError::NotSignedIn));
     }
 
     // --- list ---

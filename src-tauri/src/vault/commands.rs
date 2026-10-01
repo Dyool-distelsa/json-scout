@@ -67,6 +67,14 @@ pub async fn vault_status(app: AppHandle) -> Result<Identity, VaultError> {
     run_blocking(move || service_for(workspace).status()).await
 }
 
+/// Open the Azure sign-in flow and wait for it. The CLI keeps the session;
+/// only the signed-in identity comes back, never a token.
+#[tauri::command]
+pub async fn vault_login(app: AppHandle) -> Result<Identity, VaultError> {
+    let workspace = workspace_for(&app)?;
+    run_blocking(move || service_for(workspace).login()).await
+}
+
 #[tauri::command]
 pub async fn vault_list(app: AppHandle, vault: String) -> Result<Vec<SecretListItem>, VaultError> {
     let workspace = workspace_for(&app)?;

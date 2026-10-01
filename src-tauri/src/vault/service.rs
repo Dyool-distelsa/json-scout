@@ -44,6 +44,12 @@ impl<P: SecretProvider> VaultService<P> {
         self.provider.whoami()
     }
 
+    /// Sign in through the provider (a browser flow that can take minutes),
+    /// then report who is signed in.
+    pub fn login(&self) -> Result<Identity, VaultError> {
+        self.provider.login()
+    }
+
     /// List a vault's secrets, sorted by name (case-insensitive), each with
     /// its local state.
     pub fn list(&self, vault: &str) -> Result<Vec<SecretListItem>, VaultError> {
@@ -105,6 +111,7 @@ mod tests {
 
     struct FakeProvider {
         identity: Result<Identity, VaultError>,
+        login: Result<Identity, VaultError>,
         listing: Result<Vec<SecretSummary>, VaultError>,
         values: HashMap<String, Result<SecretValue, VaultError>>,
         calls: Mutex<Vec<String>>,
@@ -116,6 +123,10 @@ mod tests {
                 identity: Ok(Identity {
                     user: "ana@example.com".into(),
                     subscription: "Dev".into(),
+                }),
+                login: Ok(Identity {
+                    user: "ben@example.com".into(),
+                    subscription: "Prod".into(),
                 }),
                 listing: Ok(Vec::new()),
                 values: HashMap::new(),
@@ -162,6 +173,11 @@ mod tests {
             self.listing.clone()
         }
 
+        fn login(&self) -> Result<Identity, VaultError> {
+            self.calls.lock().unwrap().push("login".into());
+            self.login.clone()
+        }
+
         fn get(&self, secret: &SecretRef) -> Result<SecretValue, VaultError> {
             self.calls
                 .lock()
@@ -196,6 +212,26 @@ mod tests {
         provider.identity = Err(VaultError::NotSignedIn);
         let (_dir, svc) = service(provider);
         assert_eq!(svc.status(), Err(VaultError::NotSignedIn));
+    }
+
+    // --- login ---
+
+    #[test]
+    fn login_returns_the_identity_from_the_provider_login() {
+        let (_dir, svc) = service(FakeProvider::new());
+        let identity = svc.login().expect("login");
+        assert_eq!(identity.user, "ben@example.com");
+        assert_eq!(identity.subscription, "Prod");
+        assert_eq!(svc.provider.calls(), vec!["login"]);
+    }
+
+    #[test]
+    fn login_propagates_provider_errors_and_touches_no_workspace_files() {
+        let mut provider = FakeProvider::new();
+        provider.login = Err(VaultError::Timeout);
+        let (dir, svc) = service(provider);
+        assert_eq!(svc.login(), Err(VaultError::Timeout));
+        assert!(!dir.path().join("vault-sync").exists());
     }
 
     // --- list ---

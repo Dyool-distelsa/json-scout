@@ -245,7 +245,21 @@ Errors are `{ kind, message }`; the new kinds are `not_pulled`, `invalid_json`,
 - `vault_local_changes()` returns `[{ vault, name }]` for every `modified`
   secret.
 
+## Reviews (RDD, each with the user's consent)
+- P2–P3: declined by the user.
+- P4–P5: approved (`review-bbc8a17df179b26f`). Its two advisories became P5b.
+- P5b+P1: approved (`review-4f2216bdac012bbf`).
+- P6: approved (`review-77dae6ea2d04924e`).
+- P7: approved (`review-221e3307e22e5c92`).
+- The advisories from P5b+P1, P6 and P7 became P8.
+- P8: approved (`review-df1a9b3c3b6890cf`). One suggestion is left open: no
+  test asserts that focus moves to "Sign in" after a session loss.
+- Local beta reinstalled on 2026-10-01 from `a6eb225`.
+
 ## Next step
-Review of the frontend batch (RDD with the user's consent), then a visual check
-of the push dialog and the close guard in the real app, and a manual push to a
-throwaway dev secret. Nothing is pushed or delivered until the user says so.
+The user runs the manual check in the real app:
+- a visual check of the push dialog and the close guard;
+- a push to a throwaway dev secret, including the conflict path, then rolling
+  it back from the portal.
+
+Nothing is pushed or delivered until the user says so.

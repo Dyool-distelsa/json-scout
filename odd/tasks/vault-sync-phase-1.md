@@ -114,22 +114,33 @@ environment colours, a settings toggle for workspace cleanup.
 The user asked for Vault to be optional: a switch in a Plugins menu turns it
 on, checks the Azure session or asks for one, and shows the Vault panel on the
 left where Files is.
-- [ ] T8 — Backend `vault_login` command: runs `az login` (browser flow,
+- [x] T8 — Backend `vault_login` command: runs `az login` (browser flow,
       argument array, no shell) through the existing `CommandRunner` with a
       longer timeout (5 min), discards its stdout (an account listing, never a
       token), then returns `whoami`. Errors map like the other commands
       (`timeout`, `az_missing`, `cli`). The app still never reads or stores a
-      token.
-- [ ] T9 — Plugins menu in the toolbar with an "Azure Key Vault" switch
+      token. Done in `f5a51e5`. `login()` sits on the `SecretProvider` port,
+      and `CommandRunner::run_with_timeout` is used for login only. 126 Rust
+      tests pass; RED was 6 of 8 failing on assertions.
+- [x] T9 — Plugins menu in the toolbar with an "Azure Key Vault" switch
       (`role="switch"`, keyboard accessible). It is off by default and persisted
       in `localStorage` with a try/catch fallback to off. A pure, tested plugin
       settings model.
-- [ ] T10 — The left sidebar gets tabs **Files | Vault**. The Vault tab exists
+- [x] T10 — The left sidebar gets tabs **Files | Vault**. The Vault tab exists
       only while the plugin is on, and it leaves the right panel. Turning the
       plugin on checks `vault_status`. If not signed in, the panel shows
       "Sign in to Azure" (→ `vault_login` → re-check) and the vault search
       stays disabled until a session exists. Turning it off hides the tab and
       returns to Files. The collapse rail label follows the active tab.
+      T9–T10 done: new `plugins.js`, `pluginsMenu.js` and `sidebarTabs.js`,
+      plus session stages in `vaultModel.js` (`checking`, `signed-out`,
+      `signing-in`, `ready`, `unavailable`). The right panel padding is back to
+      `8px 10px`. Fixed an existing bug where clicking any header button
+      toggled the sidebar collapse. 427 JS tests pass (+75; RED was 64 of 72
+      failing). A headless Edge smoke test with a faked invoke passed 58/58 checks;
+      that test is not in the repository. Still needs a check in the real Tauri app with a real
+      `az login`, and there is no Cancel during sign-in (bounded by the 5 min
+      timeout).
 
 ## Route per task
 | Task | Route | Trigger evidence |

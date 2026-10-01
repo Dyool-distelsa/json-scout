@@ -116,3 +116,144 @@ export function errorMessage(err) {
 export function needsPullConfirmation(item) {
   return item?.localState === 'modified';
 }
+
+/**
+ * Whether a rejected backend call means the Azure session is gone.
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isSignedOutError(err) {
+  return err?.kind === 'not_signed_in';
+}
+
+/** What the panel knows about the Azure session before any call has finished. */
+export const INITIAL_SESSION = Object.freeze({
+  identity: null,
+  error: null,
+  checking: false,
+  signingIn: false,
+});
+
+const NOT_SIGNED_IN = Object.freeze({ kind: 'not_signed_in' });
+
+/**
+ * Next session state for an event. Returns a new object and never mutates its
+ * input; unknown events leave the state unchanged.
+ * Events: check, checked{identity}, check-failed{error}, check-cancelled,
+ * sign-in, signed-in{identity}, sign-in-failed{error}, expired.
+ * @param {typeof INITIAL_SESSION} session
+ * @param {{ type: string, identity?: object, error?: object }|undefined} event
+ */
+export function reduceSession(session, event) {
+  switch (event?.type) {
+    case 'check':
+      return { ...session, error: null, checking: true };
+    case 'checked':
+      return { ...session, identity: event.identity ?? {}, error: null, checking: false };
+    case 'check-failed':
+      return { ...session, identity: null, error: event.error || { kind: 'unknown' }, checking: false };
+    case 'check-cancelled':
+      return { ...session, checking: false };
+    case 'sign-in':
+      return { ...session, error: null, signingIn: true };
+    case 'signed-in':
+      return {
+        identity: event.identity ?? {},
+        error: null,
+        checking: false,
+        signingIn: false,
+      };
+    case 'sign-in-failed':
+      // A failed sign-in leaves the user signed out, except when the CLI is
+      // not installed: signing in again cannot fix that.
+      return {
+        identity: null,
+        error: event.error?.kind === 'az_missing' ? event.error : { ...NOT_SIGNED_IN },
+        checking: false,
+        signingIn: false,
+      };
+    case 'expired':
+      return { ...session, identity: null, error: { ...NOT_SIGNED_IN }, checking: false };
+    default:
+      return session;
+  }
+}
+
+/**
+ * Which view the panel shows for a session state.
+ * @param {typeof INITIAL_SESSION|undefined} session
+ * @returns {'checking'|'signed-out'|'signing-in'|'ready'|'unavailable'}
+ */
+export function panelStage(session) {
+  if (session?.signingIn) return 'signing-in';
+  if (session?.identity) return 'ready';
+  if (session?.checking) return 'checking';
+  if (session?.error) return isSignedOutError(session.error) ? 'signed-out' : 'unavailable';
+  return 'checking';
+}
+
+/**
+ * Text for the "cannot use Azure right now" view.
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function unavailableMessage(err) {
+  if (err?.kind === 'az_missing') {
+    return 'The Azure CLI (az) is required for Azure Key Vault. Install it, make sure it is on your PATH, then check again.';
+  }
+  return errorMessage(err);
+}
+
+/** Shown when a call fails because the Azure session ended while the panel was open. */
+export const SESSION_EXPIRED_MESSAGE = 'Your Azure session has ended. Sign in again to continue.';
+
+/**
+ * Text for a failed sign-in. The generic "run az login" advice would be
+ * circular here, so it is replaced.
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function loginErrorMessage(err) {
+  switch (err?.kind) {
+    case 'timeout':
+      return 'Sign-in did not finish in time. Try again.';
+    case 'not_signed_in':
+      return 'Sign-in was not completed. Try again.';
+    default:
+      return errorMessage(err);
+  }
+}
+
+/**
+ * What the non-ready views say and offer.
+ * @param {'checking'|'signed-out'|'signing-in'|'ready'|'unavailable'} stage
+ * @param {unknown} error the session error, used by the unavailable view
+ * @returns {{ title: string, hint: string,
+ *   action: { kind: 'sign-in'|'retry', label: string, disabled: boolean }|null }|null}
+ */
+export function stageContent(stage, error) {
+  switch (stage) {
+    case 'checking':
+      return { title: 'Checking your Azure session…', hint: '', action: null };
+    case 'signed-out':
+      return {
+        title: 'Sign in to Azure to browse Key Vault secrets.',
+        hint: 'A browser window will open so you can finish signing in.',
+        action: { kind: 'sign-in', label: 'Sign in to Azure', disabled: false },
+      };
+    case 'signing-in':
+      return {
+        title: 'Waiting for sign-in in your browser…',
+        hint: 'Finish signing in in the window that opened. This can take a few minutes.',
+        action: { kind: 'sign-in', label: 'Signing in…', disabled: true },
+      };
+    case 'unavailable':
+      return {
+        title: unavailableMessage(error),
+        hint: '',
+        action: { kind: 'retry', label: 'Check again', disabled: false },
+      };
+    default:
+      return null;
+  }
+}

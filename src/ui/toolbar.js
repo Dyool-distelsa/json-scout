@@ -7,15 +7,18 @@ function withHint(title, action) {
   const hint = formatShortcut(action, isMac);
   return hint ? `${title} (${hint})` : title;
 }
+import { createPluginsMenu } from './pluginsMenu.js';
 
 /**
  * Build the main toolbar. `handlers` is a map of action name -> callback,
  * e.g. { format, minify, validate, repair, diffToggle, sortKeys, escape,
  * unescape, save, saveAs, open, themeToggle, indentChange }.
+ * `options.plugins`, when given, adds the Plugins menu (see createPluginsMenu).
  * @param {HTMLElement} container
  * @param {Record<string, Function>} handlers
+ * @param {{ plugins?: Parameters<typeof createPluginsMenu>[0] }} [options]
  */
-export function createToolbar(container, handlers) {
+export function createToolbar(container, handlers, options = {}) {
   container.innerHTML = '';
 
   const groups = [
@@ -100,6 +103,15 @@ export function createToolbar(container, handlers) {
   spacer.className = 'toolbar__spacer';
   container.appendChild(spacer);
 
+  let pluginsMenu = null;
+  if (options.plugins) {
+    const pluginsGroup = document.createElement('div');
+    pluginsGroup.className = 'toolbar__group';
+    pluginsMenu = createPluginsMenu(options.plugins);
+    pluginsGroup.appendChild(pluginsMenu.element);
+    container.appendChild(pluginsGroup);
+  }
+
   const themeGroup = document.createElement('div');
   themeGroup.className = 'toolbar__group';
   const themeBtn = document.createElement('button');
@@ -113,5 +125,5 @@ export function createToolbar(container, handlers) {
   themeGroup.appendChild(themeBtn);
   container.appendChild(themeGroup);
 
-  return { indentSelect };
+  return { indentSelect, pluginsMenu };
 }

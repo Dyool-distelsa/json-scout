@@ -126,6 +126,16 @@ compare, and creating or deleting secrets.
       back to `clean` without rewriting a file the editor has open. Forbidden
       now reads "read or write". 241 Rust tests pass (+60 in P5); RED was 9 of
       13 gate tests, 7 of 10 workspace tests and 34 service tests failing.
+- [x] P5b — Backend fixes from review. The preview now also records the
+      remote version it observed, and `vault_push(overwrite=true)` proceeds only
+      if the vault still holds exactly that version (otherwise `conflict`, the
+      user previews again and sees the new remote). `PreviewGate::take` checks
+      and removes the preview under one lock, so two pushes with one hash cannot
+      both reach `set`; `restore` puts it back after a `conflict`, a failed
+      remote read or a failed `set` so the same hash can be retried. RED: 3
+      service tests failed on assertions (two overwrite cases, one racing push
+      that wrote twice) and 7 gate tests failed against a stubbed `take`. 252
+      Rust tests pass (+11).
 - [ ] P6 — Frontend push flow: a Push action on modified rows, a diff view
       (added, removed and changed keys with masked values and reveal), the
       confirm dialog with the environment header and typed confirmation for
@@ -180,7 +190,10 @@ Errors are `{ kind, message }`; the new kinds are `not_pulled`, `invalid_json`,
   remembered, so a push after it fails.
 - `vault_push({ vault, name, contentHash, overwrite? })` returns
   `{ newVersion }`. `overwrite` defaults to `false`; a `conflict` error keeps
-  the preview, so "Overwrite anyway" reuses the same `contentHash`.
+  the preview, so "Overwrite anyway" reuses the same `contentHash`. Overwrite
+  only works over the remote version the preview showed: if the vault changed
+  again after the preview, `vault_push` answers `conflict` again and the UI
+  must call `vault_push_preview` anew (the user then sees the new remote).
 - `vault_local_changes()` returns `[{ vault, name }]` for every `modified`
   secret.
 

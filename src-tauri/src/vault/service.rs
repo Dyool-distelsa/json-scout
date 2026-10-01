@@ -325,7 +325,7 @@ mod tests {
             std::path::PathBuf::from(&result.path),
             vault_dir.join("app-config.json")
         );
-        let expected = "{\n  \"a\": 2,\n  \"b\": 1\n}\n";
+        let expected = "{\n  \"b\": 1,\n  \"a\": 2\n}\n";
         assert_eq!(fs::read_to_string(&result.path).unwrap(), expected);
         assert_eq!(
             fs::read_to_string(vault_dir.join(".base").join("app-config.json")).unwrap(),

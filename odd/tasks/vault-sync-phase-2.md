@@ -80,10 +80,16 @@ compare, and creating or deleting secrets.
       hidden) and the `loadFileFromDisk` boolean contract. These are
       characterisation tests of shipped behaviour, so RED is shown by
       temporarily breaking the guarded line.
-- [ ] P2 — Lossless JSON formatter and minifier in Rust (tokenizer that keeps
+- [x] P2 — Lossless JSON formatter and minifier in Rust (tokenizer that keeps
       lexemes and key order, reports duplicates). It replaces the
       `serde_json::Value` path in `normalise`. Pull and push round-trip tests,
       including `1.50`, `1e3`, big integers, unicode escapes and duplicate keys.
+      Done: `vault/json_text.rs` (`pretty`, `minify`, `duplicate_keys`; strict
+      JSON grammar, depth limit 128, errors carry line/column and a fixed
+      reason, never input). Duplicates are a separate query, not an error, so
+      formatting and pull still succeed and push can refuse. 155 Rust tests
+      pass (+29); RED was 22 of 27 formatter tests plus 6 `normalise`/pull
+      tests failing on assertions.
 - [ ] P3 — Atomic pull: write base, then working, then meta last; a missing or
       stale meta means "not pulled". `clean(None)` only removes a root whose
       leaf is `vault-sync`.

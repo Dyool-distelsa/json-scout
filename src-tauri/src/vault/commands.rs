@@ -5,10 +5,11 @@
 
 use super::az_cli::{AzCliProvider, SystemRunner};
 use super::domain::{Identity, VaultError};
-use super::service::{PullResult, SecretListItem, VaultService};
+use super::preview_gate::PreviewGate;
+use super::service::{LocalChange, PullResult, PushPreview, PushResult, SecretListItem, VaultService};
 use super::workspace::{Workspace, ROOT_DIR_NAME};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 type Service = VaultService<AzCliProvider<SystemRunner>>;
 
@@ -96,6 +97,57 @@ pub async fn vault_pull(
 pub async fn vault_clean(app: AppHandle, vault: Option<String>) -> Result<(), VaultError> {
     let workspace = workspace_for(&app)?;
     run_blocking(move || service_for(workspace).clean(vault.as_deref())).await
+}
+
+/// Step one of a push: compare the working copy with its base, check the vault
+/// for a newer version and remember what is about to be pushed. Writes
+/// nothing to the vault. The frontend passes the returned `contentHash` to
+/// `vault_push`.
+#[tauri::command]
+pub async fn vault_push_preview(
+    app: AppHandle,
+    gate: State<'_, PreviewGate>,
+    vault: String,
+    name: String,
+) -> Result<PushPreview, VaultError> {
+    let workspace = workspace_for(&app)?;
+    let gate = gate.inner().clone();
+    run_blocking(move || {
+        service_for(workspace)
+            .with_preview_gate(gate)
+            .push_preview(&vault, &name)
+    })
+    .await
+}
+
+/// Step two of a push: write the previewed bytes as a new version. Refused
+/// unless `contentHash` matches an unexpired preview. A missing `overwrite`
+/// means `false`.
+#[tauri::command]
+pub async fn vault_push(
+    app: AppHandle,
+    gate: State<'_, PreviewGate>,
+    vault: String,
+    name: String,
+    content_hash: String,
+    overwrite: Option<bool>,
+) -> Result<PushResult, VaultError> {
+    let workspace = workspace_for(&app)?;
+    let gate = gate.inner().clone();
+    run_blocking(move || {
+        service_for(workspace)
+            .with_preview_gate(gate)
+            .push(&vault, &name, &content_hash, overwrite.unwrap_or(false))
+    })
+    .await
+}
+
+/// The pulled secrets that have unpushed edits, across every vault. Reads only
+/// the local disk, so it works offline and is cheap enough for a close guard.
+#[tauri::command]
+pub async fn vault_local_changes(app: AppHandle) -> Result<Vec<LocalChange>, VaultError> {
+    let workspace = workspace_for(&app)?;
+    run_blocking(move || service_for(workspace).local_changes()).await
 }
 
 #[cfg(test)]

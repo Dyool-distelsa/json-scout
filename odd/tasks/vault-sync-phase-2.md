@@ -110,10 +110,22 @@ compare, and creating or deleting secrets.
       second call. `StagedFile` is created with `create_new` and deleted by
       `Drop`; `--content-type` is sent only for JSON objects/arrays
       (`json_text::is_container`). 181 Rust tests pass (+17); RED was 16 failing.
-- [ ] P5 — Service and commands: `vault_push_preview` (validity, empty-diff
+- [x] P5 — Service and commands: `vault_push_preview` (validity, empty-diff
       detection, remote version check, environment, hash) and `vault_push`
       (hash gate, overwrite flag, minify, set, then update base and meta with
       the new version). Wired in `lib.rs`.
+      Done: `PreviewGate` (`vault/preview_gate.rs`, `sha2` 0.10 added, already in
+      the lockfile; injected clock, 5 min TTL, shared as managed state);
+      `VaultService::{push_preview, push, local_changes}`; commands
+      `vault_push_preview`, `vault_push` and `vault_local_changes` (chosen over
+      extending `vault_list`: it reads only the disk, so a close guard works
+      offline and covers vaults that are not listed). New error kinds
+      `not_pulled`, `invalid_json`, `duplicate_keys`, `no_changes`,
+      `preview_required`, `conflict`. After a push the new `.base` is the
+      working text that was pushed, not the minified bytes, so the secret goes
+      back to `clean` without rewriting a file the editor has open. Forbidden
+      now reads "read or write". 241 Rust tests pass (+60 in P5); RED was 9 of
+      13 gate tests, 7 of 10 workspace tests and 34 service tests failing.
 - [ ] P6 — Frontend push flow: a Push action on modified rows, a diff view
       (added, removed and changed keys with masked values and reveal), the
       confirm dialog with the environment header and typed confirmation for
@@ -156,6 +168,21 @@ batch with the user's consent. Nothing is pushed until the user says so.
 
 ## Progress
 - Branch `feat/vault-push` created from `feat/vault-plugin-menu` (d53d370).
+- Backend batch P2–P5 done, one commit per task. Rust 126 -> 241 tests.
+
+## Frontend contract (for P6/P7)
+Errors are `{ kind, message }`; the new kinds are `not_pulled`, `invalid_json`,
+`duplicate_keys`, `no_changes`, `preview_required` and `conflict`.
+- `vault_push_preview({ vault, name })` returns `{ changed, format, baseVersion,
+  baseText, workingText, remote: { currentVersion, conflict, remoteText },
+  environment: "dev"|"qa"|"stg"|"prod"|"unknown", contentHash }`. `remoteText`
+  is set only on a conflict. A preview with `changed: false` is not
+  remembered, so a push after it fails.
+- `vault_push({ vault, name, contentHash, overwrite? })` returns
+  `{ newVersion }`. `overwrite` defaults to `false`; a `conflict` error keeps
+  the preview, so "Overwrite anyway" reuses the same `contentHash`.
+- `vault_local_changes()` returns `[{ vault, name }]` for every `modified`
+  secret.
 
 ## Next step
-Backend batch, P2–P5.
+Frontend batch, P1, P6, P7.

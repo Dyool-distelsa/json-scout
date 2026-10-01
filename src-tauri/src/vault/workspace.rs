@@ -74,6 +74,16 @@ pub struct Pulled {
     pub format: Format,
 }
 
+/// A pulled secret as it is on disk right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PulledSecret {
+    pub format: Format,
+    /// Version the base copy was pulled (or last pushed) at.
+    pub base_version: String,
+    pub base_text: String,
+    pub working_text: String,
+}
+
 /// Turn a raw secret value into its stored form.
 ///
 /// A value that is a JSON object or array is stored as `json`, re-indented by
@@ -175,6 +185,71 @@ impl Workspace {
         )
     }
 
+    /// Everything a push needs about one pulled secret.
+    pub fn read_pulled(&self, vault: &str, name: &str) -> Result<PulledSecret, VaultError> {
+        let vault_dir = self.vault_dir(vault)?;
+        validate_name(name)?;
+
+        let meta = read_meta(&vault_dir, name).ok_or(VaultError::NotPulled)?;
+        let base_text = read_text_if_present(&base_path(&vault_dir, name, meta.format))?
+            .ok_or(VaultError::NotPulled)?;
+        let working_text = read_text_if_present(&working_path(&vault_dir, name, meta.format))?
+            .ok_or(VaultError::NotPulled)?;
+        Ok(PulledSecret {
+            format: meta.format,
+            base_version: meta.base_version,
+            base_text,
+            working_text,
+        })
+    }
+
+    /// Record a successful push: `synced_text` (the working copy that was
+    /// pushed) becomes the new base, and `new_version` the new base version.
+    /// The working copy itself is not touched. The metadata is the commit
+    /// marker here too: it is removed first and written last.
+    pub fn record_push(
+        &self,
+        vault: &str,
+        name: &str,
+        synced_text: &str,
+        new_version: &str,
+    ) -> Result<(), VaultError> {
+        let vault_dir = self.vault_dir(vault)?;
+        validate_name(name)?;
+
+        let meta = read_meta(&vault_dir, name).ok_or(VaultError::NotPulled)?;
+        remove_if_present(&meta_path(&vault_dir, name))?;
+        write_atomic(&base_path(&vault_dir, name, meta.format), synced_text)?;
+        write_atomic(
+            &meta_path(&vault_dir, name),
+            &meta_document(new_version, meta.format),
+        )
+    }
+
+    /// Every pulled secret whose working copy differs from its base, as
+    /// `(vault, name)`, sorted. Reads only the local disk.
+    pub fn local_changes(&self) -> Result<Vec<(String, String)>, VaultError> {
+        let mut changes = Vec::new();
+        for vault in dir_names(&self.root, |name| validate_name(name).is_ok())? {
+            // Only folders count: a stray file in the root is not a vault.
+            if !self.root.join(&vault).is_dir() {
+                continue;
+            }
+            let vault_dir = self.root.join(&vault);
+            let metas = dir_names(&vault_dir, |file| file.ends_with(META_SUFFIX))?;
+            for file in metas {
+                let name = file.trim_end_matches(META_SUFFIX);
+                if validate_name(name).is_err() {
+                    continue;
+                }
+                if self.local_state(&vault, name)? == LocalState::Modified {
+                    changes.push((vault.clone(), name.to_string()));
+                }
+            }
+        }
+        Ok(changes)
+    }
+
     /// Remove one vault's folder, or the whole workspace when `vault` is
     /// `None`. A missing folder is not an error. Removing the whole root is
     /// refused unless its last path component is [`ROOT_DIR_NAME`], so a wrong
@@ -222,8 +297,10 @@ fn base_path(vault_dir: &Path, name: &str, format: Format) -> PathBuf {
         .join(format!("{name}.{}", format.extension()))
 }
 
+const META_SUFFIX: &str = ".meta.json";
+
 fn meta_path(vault_dir: &Path, name: &str) -> PathBuf {
-    vault_dir.join(format!("{name}.meta.json"))
+    vault_dir.join(format!("{name}{META_SUFFIX}"))
 }
 
 fn meta_document(version: &str, format: Format) -> String {
@@ -258,6 +335,34 @@ fn read_meta(vault_dir: &Path, name: &str) -> Option<Meta> {
 
 fn write_atomic(path: &Path, contents: &str) -> Result<(), VaultError> {
     crate::fs_ops::write_file_atomic(path, contents).map_err(VaultError::from)
+}
+
+/// The sorted names of the entries of `dir` that `keep` accepts. A missing
+/// folder has no entries. Names that are not valid UTF-8 are skipped.
+fn dir_names(dir: &Path, keep: impl Fn(&str) -> bool) -> Result<Vec<String>, VaultError> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.into()),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        if let Some(name) = entry?.file_name().to_str() {
+            if keep(name) {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn read_text_if_present(path: &Path) -> Result<Option<String>, VaultError> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
 }
 
 fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, VaultError> {
@@ -620,6 +725,151 @@ mod tests {
         assert!(!vault_dir.join(".base").join("cfg.json").exists());
         let meta = fs::read_to_string(vault_dir.join("cfg.meta.json")).unwrap();
         assert!(meta.contains("\"v2\"") && meta.contains("\"text\""), "{meta}");
+    }
+
+    // --- read_pulled / record_push / local_changes ---
+
+    #[test]
+    fn read_pulled_returns_the_format_version_and_both_texts() {
+        let (_dir, ws) = workspace();
+        let pulled = ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        fs::write(&pulled.path, "{\n  \"a\": 2\n}\n").unwrap();
+
+        let read = ws.read_pulled("kv", "cfg").unwrap();
+
+        assert_eq!(
+            read,
+            PulledSecret {
+                format: Format::Json,
+                base_version: "v1".into(),
+                base_text: "{\n  \"a\": 1\n}\n".into(),
+                working_text: "{\n  \"a\": 2\n}\n".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn read_pulled_reports_not_pulled_when_there_is_nothing_usable_locally() {
+        let (_dir, ws) = workspace();
+        assert_eq!(ws.read_pulled("kv", "cfg"), Err(VaultError::NotPulled));
+
+        let pulled = ws.write_pull("kv", "cfg", &secret("x", "v1")).unwrap();
+        fs::remove_file(&pulled.path).unwrap();
+        assert_eq!(ws.read_pulled("kv", "cfg"), Err(VaultError::NotPulled));
+
+        ws.write_pull("kv", "cfg", &secret("x", "v1")).unwrap();
+        fs::remove_file(ws.root().join("kv").join("cfg.meta.json")).unwrap();
+        assert_eq!(ws.read_pulled("kv", "cfg"), Err(VaultError::NotPulled));
+    }
+
+    #[test]
+    fn read_pulled_rejects_invalid_names() {
+        let (_dir, ws) = workspace();
+        assert_eq!(ws.read_pulled("../x", "cfg"), Err(VaultError::InvalidName));
+        assert_eq!(ws.read_pulled("kv", "a/b"), Err(VaultError::InvalidName));
+    }
+
+    #[test]
+    fn record_push_makes_the_pushed_text_the_base_and_leaves_the_working_copy_alone() {
+        let (_dir, ws) = workspace();
+        let pulled = ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        let edited = "{\n    \"a\":   2\n}\n";
+        fs::write(&pulled.path, edited).unwrap();
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Modified);
+
+        ws.record_push("kv", "cfg", edited, "v2").unwrap();
+
+        let read = ws.read_pulled("kv", "cfg").unwrap();
+        assert_eq!(read.base_version, "v2");
+        assert_eq!(read.base_text, edited);
+        assert_eq!(read.working_text, edited);
+        assert_eq!(read.format, Format::Json);
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Clean);
+    }
+
+    #[test]
+    fn record_push_keeps_a_later_edit_visible_as_modified() {
+        let (_dir, ws) = workspace();
+        let pulled = ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        fs::write(&pulled.path, "{\n  \"a\": 2\n}\n").unwrap();
+        // The user saved again after the text that was pushed was captured.
+        let pushed = fs::read_to_string(&pulled.path).unwrap();
+        fs::write(&pulled.path, "{\n  \"a\": 3\n}\n").unwrap();
+
+        ws.record_push("kv", "cfg", &pushed, "v2").unwrap();
+
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Modified);
+    }
+
+    #[test]
+    fn record_push_requires_a_pulled_secret_and_valid_names() {
+        let (_dir, ws) = workspace();
+        assert_eq!(ws.record_push("kv", "cfg", "x", "v2"), Err(VaultError::NotPulled));
+        assert_eq!(ws.record_push("../x", "cfg", "x", "v2"), Err(VaultError::InvalidName));
+        assert_eq!(ws.record_push("kv", "a b", "x", "v2"), Err(VaultError::InvalidName));
+    }
+
+    #[test]
+    fn a_record_push_that_fails_midway_leaves_the_secret_not_pulled() {
+        let (_dir, ws) = workspace();
+        ws.write_pull("kv", "cfg", &secret(r#"{"a":1}"#, "v1")).unwrap();
+        let base = ws.root().join("kv").join(".base").join("cfg.json");
+        fs::remove_file(&base).unwrap();
+        fs::create_dir(&base).unwrap();
+
+        let result = ws.record_push("kv", "cfg", "{}\n", "v2");
+
+        assert!(matches!(result, Err(VaultError::Io(_))), "{result:?}");
+        assert!(!ws.root().join("kv").join("cfg.meta.json").exists());
+        assert_eq!(ws.local_state("kv", "cfg").unwrap(), LocalState::Remote);
+    }
+
+    #[test]
+    fn local_changes_lists_only_modified_secrets_across_vaults_sorted() {
+        let (_dir, ws) = workspace();
+        let edit = |vault: &str, name: &str, text: &str| {
+            let pulled = ws.write_pull(vault, name, &secret(r#"{"a":1}"#, "v1")).unwrap();
+            if !text.is_empty() {
+                fs::write(pulled.path, text).unwrap();
+            }
+        };
+        edit("zeta", "b", "edited");
+        edit("alpha", "z", "edited");
+        edit("alpha", "a", "edited");
+        edit("alpha", "untouched", "");
+        ws.write_pull("beta", "text", &secret("plain", "v1")).unwrap();
+        let removed = ws.write_pull("beta", "gone", &secret("x", "v1")).unwrap();
+        fs::remove_file(removed.path).unwrap();
+        // Things that look like secrets but are not pulled ones.
+        fs::create_dir_all(ws.staging_dir()).unwrap();
+        fs::write(ws.staging_dir().join("secret-1.tmp"), "x").unwrap();
+        fs::write(ws.root().join("stray.txt"), "x").unwrap();
+        fs::write(ws.root().join("alpha").join("orphan.json"), "x").unwrap();
+
+        let changes = ws.local_changes().unwrap();
+
+        assert_eq!(
+            changes,
+            vec![
+                ("alpha".to_string(), "a".to_string()),
+                ("alpha".to_string(), "z".to_string()),
+                ("zeta".to_string(), "b".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn local_changes_is_empty_when_the_workspace_does_not_exist() {
+        let (_dir, ws) = workspace();
+        assert_eq!(ws.local_changes(), Ok(vec![]));
+    }
+
+    #[test]
+    fn local_changes_sees_an_edited_text_secret_and_a_whitespace_only_edit() {
+        let (_dir, ws) = workspace();
+        let pulled = ws.write_pull("kv", "note", &secret("hello", "v1")).unwrap();
+        fs::write(pulled.path, "hello\n").unwrap();
+        assert_eq!(ws.local_changes().unwrap(), vec![("kv".to_string(), "note".to_string())]);
     }
 
     // --- staging ---

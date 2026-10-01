@@ -45,7 +45,8 @@ pub fn run() {
         // the app appears to stop opening until it is killed by hand.
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) && window.label() == "main" {
-                // No push exists in this phase, so nothing local is worth keeping.
+                // The workspace is discarded on close. The frontend asks first
+                // when a pulled secret still has unpushed edits.
                 vault::commands::cleanup_workspace(window.app_handle());
                 window.app_handle().exit(0);
             }
@@ -56,6 +57,9 @@ pub fn run() {
             Ok(())
         })
         .manage(StartupState(Mutex::new(initial_payload)))
+        // Shared by every vault command call, so a push preview made by one
+        // call is seen by the push of the next.
+        .manage(vault::preview_gate::PreviewGate::default())
         .invoke_handler(tauri::generate_handler![
             get_startup_payload,
             fs_ops::read_json_file,
@@ -69,6 +73,9 @@ pub fn run() {
             vault::commands::vault_list,
             vault::commands::vault_pull,
             vault::commands::vault_clean,
+            vault::commands::vault_push_preview,
+            vault::commands::vault_push,
+            vault::commands::vault_local_changes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running json-scout");

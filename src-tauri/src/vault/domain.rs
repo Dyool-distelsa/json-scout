@@ -62,6 +62,22 @@ pub enum VaultError {
     InvalidName,
     Parse,
     Timeout,
+    /// The secret has no local working copy to push (never pulled, or the
+    /// pull did not finish, or the file was deleted).
+    NotPulled,
+    /// The working copy of a JSON secret is not valid JSON. Only the position
+    /// is kept, never any of the text.
+    InvalidJson { line: usize, column: usize },
+    /// The working copy has a key twice in one object. Holds the 1-based
+    /// lines of the repeated keys.
+    DuplicateKeys(Vec<usize>),
+    /// The working copy is the same as the pulled base: nothing to push.
+    NoChanges,
+    /// A push without a matching, unexpired preview of exactly these bytes.
+    PreviewRequired,
+    /// The vault's current version is not the one the working copy was
+    /// pulled from.
+    Conflict,
     Io(String),
     Cli(String),
     Internal(String),
@@ -78,6 +94,12 @@ impl VaultError {
             VaultError::InvalidName => "invalid_name",
             VaultError::Parse => "parse",
             VaultError::Timeout => "timeout",
+            VaultError::NotPulled => "not_pulled",
+            VaultError::InvalidJson { .. } => "invalid_json",
+            VaultError::DuplicateKeys(_) => "duplicate_keys",
+            VaultError::NoChanges => "no_changes",
+            VaultError::PreviewRequired => "preview_required",
+            VaultError::Conflict => "conflict",
             VaultError::Io(_) => "io",
             VaultError::Cli(_) => "cli",
             VaultError::Internal(_) => "internal",
@@ -92,7 +114,7 @@ impl fmt::Display for VaultError {
                 f.write_str("Not signed in to Azure. Run `az login` and retry.")
             }
             VaultError::Forbidden => f.write_str(
-                "Access denied. Your account does not have permission to read secrets in this vault.",
+                "Access denied. Your account does not have permission to read or write secrets in this vault.",
             ),
             VaultError::NotFound => f.write_str("The vault or secret was not found."),
             VaultError::AzMissing => f.write_str(
@@ -106,6 +128,30 @@ impl fmt::Display for VaultError {
             }
             VaultError::Timeout => f.write_str(
                 "The Azure CLI did not respond in time. Check your network connection and `az`, then retry.",
+            ),
+            VaultError::NotPulled => f.write_str(
+                "This secret has no local working copy. Pull it before pushing.",
+            ),
+            VaultError::InvalidJson { line, column } => write!(
+                f,
+                "The working copy is not valid JSON (line {line}, column {column}). Fix it and try again."
+            ),
+            VaultError::DuplicateKeys(lines) => {
+                const SHOWN: usize = 5;
+                let listed: Vec<String> = lines.iter().take(SHOWN).map(usize::to_string).collect();
+                let more = lines.len().saturating_sub(SHOWN);
+                write!(f, "The JSON repeats a key in the same object (at line {}", listed.join(", "))?;
+                if more > 0 {
+                    write!(f, " and {more} more")?;
+                }
+                f.write_str("). Remove or rename the duplicates, then preview again.")
+            }
+            VaultError::NoChanges => f.write_str("There are no changes to push."),
+            VaultError::PreviewRequired => f.write_str(
+                "The preview is missing, expired or out of date. Review the changes again before pushing.",
+            ),
+            VaultError::Conflict => f.write_str(
+                "The secret changed in the vault after you pulled it. Re-pull it, or overwrite the vault's version.",
             ),
             VaultError::Io(detail) => write!(f, "File system error: {detail}"),
             VaultError::Cli(detail) => write!(f, "Azure CLI error: {detail}"),
@@ -219,6 +265,12 @@ mod tests {
             (VaultError::InvalidName, "invalid_name"),
             (VaultError::Parse, "parse"),
             (VaultError::Timeout, "timeout"),
+            (VaultError::NotPulled, "not_pulled"),
+            (VaultError::InvalidJson { line: 1, column: 2 }, "invalid_json"),
+            (VaultError::DuplicateKeys(vec![3]), "duplicate_keys"),
+            (VaultError::NoChanges, "no_changes"),
+            (VaultError::PreviewRequired, "preview_required"),
+            (VaultError::Conflict, "conflict"),
             (VaultError::Io("x".into()), "io"),
             (VaultError::Cli("x".into()), "cli"),
             (VaultError::Internal("x".into()), "internal"),
@@ -250,6 +302,37 @@ mod tests {
         ] {
             assert!(!error.to_string().is_empty(), "{:?}", error);
         }
+    }
+
+    #[test]
+    fn push_error_messages_are_user_facing_and_never_carry_any_text() {
+        let invalid = VaultError::InvalidJson { line: 12, column: 7 }.to_string();
+        assert!(invalid.contains("line 12") && invalid.contains("column 7"), "{invalid}");
+
+        let few = VaultError::DuplicateKeys(vec![3, 9]).to_string();
+        assert!(few.contains("line 3, 9"), "{few}");
+        assert!(!few.contains("more"), "{few}");
+
+        let many = VaultError::DuplicateKeys(vec![1, 2, 3, 4, 5, 6, 7]).to_string();
+        assert!(many.contains("1, 2, 3, 4, 5") && many.contains("and 2 more"), "{many}");
+        assert!(!many.contains('6'), "{many}");
+
+        for error in [
+            VaultError::NotPulled,
+            VaultError::NoChanges,
+            VaultError::PreviewRequired,
+            VaultError::Conflict,
+        ] {
+            assert!(!error.to_string().is_empty(), "{error:?}");
+        }
+        assert!(VaultError::NotPulled.to_string().contains("Pull"));
+        assert!(VaultError::Conflict.to_string().contains("Re-pull"));
+        assert!(VaultError::PreviewRequired.to_string().contains("preview") || VaultError::PreviewRequired.to_string().contains("Review"));
+    }
+
+    #[test]
+    fn the_forbidden_message_covers_writing_as_well_as_reading() {
+        assert!(VaultError::Forbidden.to_string().contains("write"));
     }
 
     #[test]

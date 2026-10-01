@@ -1,0 +1,141 @@
+# Vault Sync — Phase 2: Diff and Push
+
+## Objective
+Push an edited secret back to Azure Key Vault as a new version, after a
+key-level diff and one explicit confirmation, without ever changing bytes the
+user did not edit.
+
+Source plan: "Vault Sync Plan" artifact, phase 2. Phase 1 is in
+`odd/tasks/vault-sync-phase-1.md`, and its follow-ups feed this document.
+
+## Problem
+Phase 1 can pull and edit, but a change still has to be copied back by hand.
+Two phase 1 shortcuts make a naive push unsafe:
+- `normalise` re-serialises through `serde_json::Value`, so `1.50` becomes
+  `1.5`, big integers lose precision and duplicate keys collapse.
+- `write_pull` writes three files in sequence and is not atomic as a whole.
+
+## Scope
+- Backend: lossless JSON formatting, atomic pull, a guarded `clean` root, a
+  `set` adapter through a temp file, a push preview with a remote version check
+  and a content-hash gate, and push.
+- Frontend: jsdom test harness for the panel's DOM wiring, a diff view, the
+  confirm dialog, push, and a close guard for unpushed edits.
+
+Out of scope: version history and restore (phase 3/4), bulk search, cross-env
+compare, and creating or deleting secrets.
+
+## Decisions
+- **Close behaviour (user, 2026-10-01): option A.** The workspace is still
+  cleared on close. If any pulled secret is `modified` (not pushed), closing
+  asks first ("N secrets have unpushed edits. Close and discard them?"). Startup
+  cleanup stays.
+- **Delivery (user, 2026-10-01): one larger PR**, no PR chain. Work continues
+  on `feat/vault-push` until the user says to deliver. Strategy `single-pr`.
+  The branch is stacked on `feat/vault-plugin-menu` (PR #7). Rebase it onto
+  `main` with `--onto` once #7 merges.
+- **Lossless formatting, no key sorting.** The working copy is pretty-printed by
+  a token-level formatter that keeps every string and number lexeme verbatim
+  and keeps key order. Push minifies with the same tokenizer (insignificant
+  whitespace only). Pulling and then pushing without edits reproduces a
+  minified remote value byte for byte. This changes the phase 1 rule
+  ("sort keys"): sorting is not needed for a key-level diff, and it would
+  rewrite every secret on its first push. Duplicate keys are reported, not
+  collapsed.
+- **Diff on the frontend.** The key-level diff for display reuses the existing
+  `diffJson` on base vs working text. The backend owns only what must be
+  trustworthy: JSON validity, the remote version check, the content hash and
+  the push itself.
+- **Hash gate.** `vault_push_preview` computes a hash of the exact bytes that
+  would be pushed and remembers it in managed state for that vault/name, with
+  a short expiry. `vault_push` refuses unless the same hash was previewed. The
+  UI therefore cannot skip the confirmation.
+- **Conflict.** If the remote's current version differs from `baseVersion`,
+  the preview reports a conflict and returns the remote text. The UI offers
+  **Re-pull** or **Overwrite anyway**; overwriting needs its own flag on
+  `vault_push`.
+- **Secret values never in arguments.** `set` uses
+  `--file <tmp> --encoding utf-8`. The temp file lives under the app data dir
+  (not `%TEMP%`), is created exclusively, and is deleted by a `Drop` guard even
+  on error. Adapter tests assert that no value appears in the recorded
+  arguments.
+- **Environment.** The environment comes from the vault name suffix: `-dev`,
+  `-qa`, `-stg`, `-main` or `-prod`, otherwise `unknown`. `main`/`prod` and
+  `unknown` get a red header and require typing the secret name to confirm.
+  `dev` gets a plain confirm.
+- **Masking.** Changed values are masked in the dialog until the user reveals
+  them. Values are never logged.
+
+## Constraints
+- Phase 1 constraints still hold: argument arrays only, name validation, no
+  token handling, no `unwrap` on `az` output, no generic shell plugin.
+- New capability permissions only where strictly needed (for example the close
+  guard's `core:window:allow-destroy`), and each one is named in its commit.
+- Existing tests must keep passing (469 JS, 126 Rust at branch start).
+
+## Tasks
+- [ ] P1 — jsdom dev dependency. DOM tests for the existing vault panel: the
+      overwrite guards (modified confirmation, clean re-list), the busy guard,
+      the lifecycle (activate/deactivate, stale status discarded, no calls while
+      hidden) and the `loadFileFromDisk` boolean contract. These are
+      characterisation tests of shipped behaviour, so RED is shown by
+      temporarily breaking the guarded line.
+- [ ] P2 — Lossless JSON formatter and minifier in Rust (tokenizer that keeps
+      lexemes and key order, reports duplicates). It replaces the
+      `serde_json::Value` path in `normalise`. Pull and push round-trip tests,
+      including `1.50`, `1e3`, big integers, unicode escapes and duplicate keys.
+- [ ] P3 — Atomic pull: write base, then working, then meta last; a missing or
+      stale meta means "not pulled". `clean(None)` only removes a root whose
+      leaf is `vault-sync`.
+- [ ] P4 — `az` adapter `set` and `show` of the current version, through a
+      temp file with a `Drop` guard; the trait gains `set`. Adapter tests check
+      the argument arrays and that no value appears in them.
+- [ ] P5 — Service and commands: `vault_push_preview` (validity, empty-diff
+      detection, remote version check, environment, hash) and `vault_push`
+      (hash gate, overwrite flag, minify, set, then update base and meta with
+      the new version). Wired in `lib.rs`.
+- [ ] P6 — Frontend push flow: a Push action on modified rows, a diff view
+      (added, removed and changed keys with masked values and reveal), the
+      confirm dialog with the environment header and typed confirmation for
+      prod/unknown, the conflict path (Re-pull / Overwrite anyway) and a
+      success toast with the short new version.
+- [ ] P7 — Close guard (decision A): intercept the close request; if any
+      secret is `modified`, ask before discarding. Tested in jsdom and in a pure
+      model.
+
+## Route per task
+| Task | Route | Trigger evidence |
+|------|-------|------------------|
+| P2–P5 | delegated writer (backend batch) | 4+ non-trivial Rust files |
+| P1, P6, P7 | delegated writer (frontend batch, after backend) | 4+ non-trivial JS/CSS files plus new test harness |
+
+## Acceptance criteria
+- Pulling and then pushing an unedited JSON secret produces no push ("No
+  changes"). Pushing an edited one changes only the edited lexemes.
+- A push is impossible without a matching preview; a stale base is reported
+  as a conflict.
+- No secret value appears in any process argument, log line or toast.
+- Closing with unpushed edits asks first; closing without them does not.
+
+## Applicable checks
+- `npm test`
+- `npm run build`
+- `export PATH="$HOME/.cargo/bin:$PATH" && cargo test --manifest-path src-tauri/Cargo.toml --lib`
+- `export PATH="$HOME/.cargo/bin:$PATH" && cargo build --manifest-path src-tauri/Cargo.toml`
+- Manual (user): push a change to a throwaway secret in a dev vault, then
+  roll it back from the portal.
+
+## TDD mode
+Enabled (session config: Strict TDD Mode). Runners: `vitest run` (JS, jsdom
+for DOM tests) and `cargo test --lib` (Rust).
+
+## Delivery
+Strategy `single-pr` (user choice). Forecast: about 2,500 authored lines. Work
+units are committed per task on `feat/vault-push`. RDD review runs per writer
+batch with the user's consent. Nothing is pushed until the user says so.
+
+## Progress
+- Branch `feat/vault-push` created from `feat/vault-plugin-menu` (d53d370).
+
+## Next step
+Backend batch, P2–P5.

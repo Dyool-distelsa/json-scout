@@ -188,8 +188,37 @@ describe('errorMessage', () => {
     expect(errorMessage({ kind: 'az_missing', message: 'raw' })).toMatch(/Azure CLI.*not found/i);
   });
 
-  it('maps forbidden to a read-access message', () => {
-    expect(errorMessage({ kind: 'forbidden', message: 'raw' })).toMatch(/read access/i);
+  it('maps forbidden to a message about reading or writing', () => {
+    expect(errorMessage({ kind: 'forbidden', message: 'raw' })).toMatch(/read or write/i);
+  });
+
+  it('words the push error kinds for people, never with a value', () => {
+    expect(errorMessage({ kind: 'not_pulled', message: 'raw' })).toBe(
+      'This secret has no local working copy. Pull it before pushing.'
+    );
+    expect(errorMessage({ kind: 'no_changes', message: 'raw' })).toBe('There are no changes to push.');
+    expect(errorMessage({ kind: 'preview_required', message: 'raw' })).toBe(
+      'The preview is out of date. Review the changes again before pushing.'
+    );
+    expect(errorMessage({ kind: 'conflict', message: 'raw' })).toBe(
+      "The secret changed in Azure after you pulled it. Re-pull it, or overwrite the vault's version."
+    );
+  });
+
+  it('keeps the backend text for invalid JSON and duplicate keys, because it names the position', () => {
+    const invalid = 'The working copy is not valid JSON (line 3, column 5). Fix it and try again.';
+    expect(errorMessage({ kind: 'invalid_json', message: invalid })).toBe(invalid);
+    const duplicate = 'The JSON repeats a key in the same object (at line 4).';
+    expect(errorMessage({ kind: 'duplicate_keys', message: duplicate })).toBe(duplicate);
+  });
+
+  it('falls back to a fixed sentence when those messages are missing', () => {
+    expect(errorMessage({ kind: 'invalid_json' })).toBe(
+      'The working copy is not valid JSON. Fix it and try again.'
+    );
+    expect(errorMessage({ kind: 'duplicate_keys', message: '' })).toBe(
+      'The JSON repeats a key in the same object. Remove the duplicate and try again.'
+    );
   });
 
   it('maps timeout to a retry message', () => {

@@ -5,6 +5,13 @@ import {
   parseRecentVaults,
   errorMessage,
   needsPullConfirmation,
+  INITIAL_SESSION,
+  reduceSession,
+  panelStage,
+  stageContent,
+  loginErrorMessage,
+  isSignedOutError,
+  SESSION_EXPIRED_MESSAGE,
 } from './vaultModel.js';
 
 const RECENT_STORAGE_KEY = 'json-scout.vault.recent';
@@ -47,11 +54,16 @@ function writeRecentVaults(list) {
 }
 
 /**
- * Render the Vault panel: load an Azure Key Vault by name, search its
- * secrets and pull one into the editor. Read-only: nothing here can write
- * to a vault. Secret values are never rendered, only names and local state.
- * Outside the Tauri shell the panel shows a disabled explanation and never
- * invokes a command.
+ * Render the Vault panel: check the Azure session (offering a sign-in when
+ * there is none), then load an Azure Key Vault by name, search its secrets
+ * and pull one into the editor. Read-only: nothing here can write to a
+ * vault. Secret values and CLI output are never rendered, only names, local
+ * state and fixed or backend-summarised messages. Outside the Tauri shell the
+ * panel shows a disabled explanation and never invokes a command.
+ *
+ * The panel is idle until `activate()` (its tab is shown); `deactivate()`
+ * makes it stop issuing calls, and the result of a check still in flight is
+ * discarded.
  * @param {HTMLElement} container
  * @param {{
  *   invoke: (command: string, args?: object) => Promise<any>,
@@ -59,6 +71,7 @@ function writeRecentVaults(list) {
  *   notify: (message: string, kind?: 'success'|'error'|'info') => void,
  *   isTauri: boolean,
  * }} deps
+ * @returns {{ activate: () => void, deactivate: () => void }}
  */
 export function createVaultPanel(container, { invoke, openFile, notify, isTauri }) {
   container.innerHTML = '';
@@ -69,12 +82,14 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     root.appendChild(
       el('p', 'vault-panel__notice', 'Azure Key Vault sync is only available in the desktop app.')
     );
-    return {};
+    return { activate() {}, deactivate() {} };
   }
 
   const state = {
+    active: false,
+    session: INITIAL_SESSION,
+    checkToken: 0, // bumped by deactivate() so a stale status result is dropped
     vault: null, // vault the current list belongs to (not the input's live value)
-    identity: null,
     items: [],
     query: '',
     busy: null, // null | { kind: 'load' } | { kind: 'pull', name }
@@ -84,6 +99,16 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   };
 
   // --- Static structure -----------------------------------------------------
+  const authEl = el('div', 'vault-auth');
+  const authTitle = el('p', 'vault-auth__title');
+  authTitle.setAttribute('role', 'status');
+  authTitle.setAttribute('aria-live', 'polite');
+  const authHint = el('p', 'vault-auth__hint');
+  const authButton = el('button', 'primary vault-auth__action');
+  authButton.type = 'button';
+  authEl.append(authTitle, authHint, authButton);
+  let authAction = null; // 'sign-in' | 'retry' | null, as last rendered
+
   const form = el('form', 'vault-panel__form');
   form.noValidate = true;
   const nameInput = el('input', 'vault-input');
@@ -114,12 +139,35 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   listEl.setAttribute('aria-label', 'Secrets');
   const listSection = el('div', 'vault-results');
   listSection.append(identityEl, searchInput, summaryEl, listEl);
-  root.append(form, chips, messageEl, listSection);
+  root.append(authEl, form, chips, messageEl, listSection);
+
+  const isReady = () => panelStage(state.session) === 'ready';
 
   // --- Rendering ------------------------------------------------------------
+  function renderAuth() {
+    const stage = panelStage(state.session);
+    const content = stageContent(stage, state.session.error);
+    root.dataset.stage = stage;
+    authEl.hidden = content === null;
+    if (!content) {
+      authAction = null;
+      return;
+    }
+    authTitle.textContent = content.title;
+    authHint.textContent = content.hint;
+    authHint.hidden = content.hint === '';
+    authButton.hidden = content.action === null;
+    authAction = content.action?.kind ?? null;
+    if (content.action) {
+      authButton.textContent = content.action.label;
+      authButton.disabled = content.action.disabled;
+    }
+    authEl.setAttribute('aria-busy', stage === 'checking' || stage === 'signing-in' ? 'true' : 'false');
+  }
+
   function renderChips() {
     chips.replaceChildren();
-    chips.hidden = state.recent.length === 0;
+    chips.hidden = state.recent.length === 0 || !isReady();
     for (const name of state.recent) {
       const chip = button(name, 'vault-chip', () => {
         nameInput.value = name;
@@ -138,8 +186,8 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   }
 
   function renderIdentity() {
-    const identity = state.identity;
-    if (!identity) {
+    const identity = state.session.identity;
+    if (!identity?.user) {
       identityEl.textContent = '';
       return;
     }
@@ -202,7 +250,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
 
   let rowFocusTargets = new Map();
   function renderList() {
-    const listed = state.vault !== null;
+    const listed = state.vault !== null && isReady();
     listSection.hidden = !listed;
     if (!listed) return;
     renderIdentity();
@@ -225,6 +273,9 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   }
 
   function render() {
+    renderAuth();
+    // The vault name and search stay out of reach until a session exists.
+    form.hidden = !isReady();
     renderBusy();
     renderMessage();
     renderList();
@@ -241,13 +292,79 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     notify?.(text, 'error');
   }
 
+  /**
+   * A failed vault call. A sign-out discovered mid-session sends the panel
+   * back to the sign-in view; anything else is reported as before.
+   */
+  function handleCallError(err) {
+    if (isSignedOutError(err)) {
+      state.session = reduceSession(state.session, { type: 'expired' });
+      state.vault = null;
+      state.items = [];
+      state.confirmName = null;
+      setMessage(SESSION_EXPIRED_MESSAGE, 'error');
+      notify?.(SESSION_EXPIRED_MESSAGE, 'error');
+      return;
+    }
+    reportError(err);
+  }
+
   function remember(vault) {
     state.recent = rememberVault(state.recent, vault);
     writeRecentVaults(state.recent);
   }
 
+  /** Ask the backend who is signed in; decides which view the panel shows. */
+  async function checkSession() {
+    if (!state.active || state.session.checking || state.session.signingIn) return;
+    const token = ++state.checkToken;
+    state.session = reduceSession(state.session, { type: 'check' });
+    setMessage(null);
+    render();
+    try {
+      const identity = await invoke('vault_status');
+      if (token !== state.checkToken) return; // deactivated meanwhile
+      state.session = reduceSession(state.session, { type: 'checked', identity });
+    } catch (err) {
+      if (token !== state.checkToken) return;
+      state.session = reduceSession(state.session, { type: 'check-failed', error: err });
+    }
+    render();
+  }
+
+  /**
+   * Open the Azure sign-in in the system browser and wait for it. The result
+   * is the signed-in identity only; the backend never hands over a token.
+   * It is applied even if the panel was hidden meanwhile: the call is already
+   * running and nothing further is issued from here.
+   */
+  async function signIn() {
+    if (panelStage(state.session) !== 'signed-out') return;
+    state.session = reduceSession(state.session, { type: 'sign-in' });
+    setMessage(null);
+    render();
+    try {
+      const identity = await invoke('vault_login');
+      state.session = reduceSession(state.session, { type: 'signed-in', identity });
+    } catch (err) {
+      state.session = reduceSession(state.session, { type: 'sign-in-failed', error: err });
+      if (state.active) {
+        const text = loginErrorMessage(err);
+        setMessage(text, 'error');
+        notify?.(text, 'error');
+      }
+    }
+    // Disabling the button dropped focus; hand it to the next useful control.
+    const focusLost =
+      document.activeElement === document.body || root.contains(document.activeElement);
+    render();
+    if (state.active && focusLost) {
+      (isReady() ? nameInput : authButton).focus();
+    }
+  }
+
   async function load(rawName) {
-    if (state.busy) return;
+    if (state.busy || !isReady()) return;
     const vault = String(rawName ?? '').trim();
     if (!isValidVaultName(vault)) {
       setMessage(INVALID_NAME_MESSAGE);
@@ -258,21 +375,18 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     setMessage(null);
     render();
     try {
-      const identity = await invoke('vault_status');
       const items = await invoke('vault_list', { vault });
       state.vault = vault;
-      state.identity = identity;
       state.items = Array.isArray(items) ? items : [];
       state.confirmName = null;
       remember(vault);
     } catch (err) {
       if (state.vault !== vault) {
         state.vault = null;
-        state.identity = null;
         state.items = [];
         state.confirmName = null;
       }
-      reportError(err);
+      handleCallError(err);
     } finally {
       state.busy = null;
       render();
@@ -312,6 +426,9 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
           state.confirmName = item.name;
           return;
         }
+        // Hidden meanwhile (the plugin was switched off or the tab changed):
+        // do not go on to fetch the secret and open it.
+        if (!state.active) return;
       }
       const result = await invoke('vault_pull', { vault, name: item.name });
       const current = state.items.find((entry) => entry.name === item.name);
@@ -319,7 +436,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       const opened = await openFile(result.path);
       if (opened !== false) notify?.(`Pulled "${item.name}" from ${vault}.`, 'success');
     } catch (err) {
-      reportError(err);
+      handleCallError(err);
     } finally {
       state.busy = null;
       render();
@@ -331,6 +448,10 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     }
   }
 
+  authButton.addEventListener('click', () => {
+    if (authAction === 'sign-in') signIn();
+    else if (authAction === 'retry') checkSession();
+  });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     load(nameInput.value);
@@ -349,5 +470,23 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   });
 
   render();
-  return {};
+  return {
+    /** The panel is shown: check the session unless one is already known. */
+    activate() {
+      if (state.active) return;
+      state.active = true;
+      if (!isReady()) checkSession();
+    },
+    /** The panel is hidden: stop issuing calls and drop a check in flight. */
+    deactivate() {
+      if (!state.active) return;
+      state.active = false;
+      state.checkToken += 1;
+      state.confirmName = null;
+      if (state.session.checking) {
+        state.session = reduceSession(state.session, { type: 'check-cancelled' });
+      }
+      render();
+    },
+  };
 }

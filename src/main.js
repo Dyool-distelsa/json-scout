@@ -10,6 +10,21 @@ import { createVaultPanel } from './ui/vaultPanel.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
 import { flashEditor } from './ui/feedback.js';
+import {
+  PLUGINS,
+  loadPluginState,
+  savePluginState,
+  setPluginEnabled,
+  isPluginEnabled,
+  isPluginAvailable,
+  isPluginActive,
+} from './ui/plugins.js';
+import {
+  visibleSidebarTabs,
+  resolveSidebarTab,
+  sidebarTabLabel,
+  moveSidebarTab,
+} from './ui/sidebarTabs.js';
 
 import { formatJson } from './tools/format.js';
 import { minifyJson } from './tools/minify.js';
@@ -67,7 +82,7 @@ const rightPanel = initRightPanel({
 
 createSettingsPanel(document.getElementById('panel-settings'), (msg, kind) => toast.showToast(msg, kind));
 
-createVaultPanel(document.getElementById('panel-vault'), {
+const vaultPanel = createVaultPanel(document.getElementById('sidebar-vault'), {
   invoke: tauriInvoke,
   openFile: loadFileFromDisk,
   notify: (msg, kind) => toast.showToast(msg, kind),
@@ -504,27 +519,142 @@ document.getElementById('copy-btn').addEventListener('click', async () => {
   }
 });
 
-createToolbar(document.getElementById('toolbar'), handlers);
+// --- Plugins and the left sidebar tabs (Files | Vault) ---------------------
+const pluginEnv = { isTauri: isTauriRuntime() };
 
-function wireCollapse(panelId, buttonId, label) {
+function pluginStorage() {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    // Even reading the property can throw when site data is blocked.
+    return null;
+  }
+}
+
+let pluginState = loadPluginState(pluginStorage());
+const isActive = (id) => isPluginActive(pluginState, id, pluginEnv);
+
+createToolbar(document.getElementById('toolbar'), handlers, {
+  plugins: {
+    plugins: PLUGINS,
+    isEnabled: (id) => isPluginEnabled(pluginState, id),
+    isAvailable: (id) => isPluginAvailable(id, pluginEnv),
+    onToggle: onPluginToggle,
+  },
+});
+
+/**
+ * Wire a collapsible side panel. A collapsed panel is a slim rail: clicking
+ * anywhere on it expands it; while expanded only its collapse button toggles.
+ * `getLabel` names the panel for the tooltip and aria-label, so a panel whose
+ * content changes (the sidebar tabs) stays described correctly.
+ * @param {string} panelId
+ * @param {string} buttonId
+ * @param {() => string} getLabel
+ * @returns {{ sync: () => void, setCollapsed: (collapsed: boolean) => void }}
+ */
+function wireCollapse(panelId, buttonId, getLabel) {
   const panel = document.getElementById(panelId);
   const button = document.getElementById(buttonId);
   const header = button.parentElement;
+  function sync() {
+    const label = getLabel();
+    const toggleState = collapseToggleState(panel.classList.contains('collapsed'), label);
+    button.title = toggleState.title;
+    button.setAttribute('aria-label', `Toggle ${label} panel`);
+    button.setAttribute('aria-expanded', toggleState.ariaExpanded);
+  }
   // A collapsed panel is a slim rail: clicking anywhere on it expands it.
-  const toggle = () => {
-    const next = panel.classList.toggle('collapsed');
-    const state = collapseToggleState(next, label);
-    button.title = state.title;
-    button.setAttribute('aria-expanded', state.ariaExpanded);
-  };
+  function toggle() {
+    panel.classList.toggle('collapsed');
+    sync();
+  }
   header.addEventListener('click', (event) => {
     const collapsed = panel.classList.contains('collapsed');
-    if (shouldToggleOnHeaderClick(collapsed, !!event.target.closest('button'))) toggle();
+    if (shouldToggleOnHeaderClick(collapsed, event.target.closest('button') === button)) toggle();
   });
-  return toggle;
+  return {
+    sync,
+    toggle,
+    setCollapsed(collapsed) {
+      panel.classList.toggle('collapsed', collapsed);
+      sync();
+    },
+  };
 }
-const toggleSidebar = wireCollapse('sidebar', 'sidebar-collapse', 'Files');
-const toggleRightPanel = wireCollapse('right-panel', 'right-panel-collapse', 'Tools');
+
+const sidebarCollapse = wireCollapse('sidebar', 'sidebar-collapse', () => sidebarTabLabel(sidebarTab));
+const rightPanelCollapse = wireCollapse('right-panel', 'right-panel-collapse', () => 'Tools');
+const toggleSidebar = sidebarCollapse.toggle;
+const toggleRightPanel = rightPanelCollapse.toggle;
+
+const sidebarTabsEl = document.getElementById('sidebar-tabs');
+const sidebarTabButtons = {
+  files: document.getElementById('sidebar-tab-files'),
+  vault: document.getElementById('sidebar-tab-vault'),
+};
+const sidebarPanels = {
+  files: document.getElementById('sidebar-list'),
+  vault: document.getElementById('sidebar-vault'),
+};
+const sidebarRailLabel = document.getElementById('sidebar-rail-label');
+let sidebarTab = 'files';
+
+/**
+ * Show one sidebar tab (falling back to Files when it is not available) and
+ * keep the tab strip, the panels, the collapse button and the rail caption in
+ * step. The vault panel is only active while its tab is shown, so it issues
+ * no calls while hidden.
+ * @param {string} requested
+ * @param {{ focus?: boolean }} [options]
+ */
+function showSidebarTab(requested, { focus = false } = {}) {
+  const visible = visibleSidebarTabs(isActive);
+  sidebarTab = resolveSidebarTab(requested, visible);
+  for (const [id, tabButton] of Object.entries(sidebarTabButtons)) {
+    const shown = visible.includes(id);
+    const selected = id === sidebarTab;
+    tabButton.hidden = !shown;
+    tabButton.classList.toggle('active', selected);
+    tabButton.setAttribute('aria-selected', String(selected));
+    tabButton.tabIndex = selected ? 0 : -1;
+    sidebarPanels[id].hidden = !(shown && selected);
+  }
+  // With a single tab the strip reads as a plain title.
+  sidebarTabsEl.dataset.count = String(visible.length);
+  sidebarRailLabel.textContent = sidebarTabLabel(sidebarTab);
+  sidebarCollapse.sync();
+  if (sidebarTab === 'vault') vaultPanel.activate();
+  else vaultPanel.deactivate();
+  if (focus) sidebarTabButtons[sidebarTab].focus();
+}
+
+for (const [id, tabButton] of Object.entries(sidebarTabButtons)) {
+  tabButton.addEventListener('click', () => showSidebarTab(id));
+}
+sidebarTabsEl.addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  showSidebarTab(moveSidebarTab(sidebarTab, visibleSidebarTabs(isActive), event.key), { focus: true });
+});
+
+/** A plugin switch changed in the Plugins menu. */
+function onPluginToggle(id, on) {
+  pluginState = setPluginEnabled(pluginState, id, on);
+  if (!savePluginState(pluginStorage(), pluginState)) {
+    toast.showToast('This setting could not be saved and will reset on restart.', 'info');
+  }
+  if (id !== 'vault') return;
+  if (on) {
+    // Make the panel visible: the user just asked for it.
+    sidebarCollapse.setCollapsed(false);
+    showSidebarTab('vault');
+  } else {
+    showSidebarTab('files');
+  }
+}
+
+showSidebarTab('files');
 
 const dropzoneOverlay = document.createElement('div');
 dropzoneOverlay.className = 'dropzone-overlay';

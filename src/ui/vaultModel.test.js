@@ -7,6 +7,14 @@ import {
   parseRecentVaults,
   errorMessage,
   needsPullConfirmation,
+  INITIAL_SESSION,
+  reduceSession,
+  panelStage,
+  stageContent,
+  unavailableMessage,
+  loginErrorMessage,
+  isSignedOutError,
+  SESSION_EXPIRED_MESSAGE,
 } from './vaultModel.js';
 
 const item = (name, localState = 'remote', enabled = true) => ({ name, enabled, localState });
@@ -224,5 +232,237 @@ describe('needsPullConfirmation', () => {
     expect(needsPullConfirmation(null)).toBe(false);
     expect(needsPullConfirmation(undefined)).toBe(false);
     expect(needsPullConfirmation({})).toBe(false);
+  });
+});
+
+const identity = { user: 'ana@example.com', subscription: 'Dev' };
+const notSignedIn = { kind: 'not_signed_in', message: 'raw' };
+const azMissing = { kind: 'az_missing', message: 'raw' };
+
+describe('isSignedOutError', () => {
+  it('is true only for the not_signed_in kind', () => {
+    expect(isSignedOutError(notSignedIn)).toBe(true);
+    expect(isSignedOutError(azMissing)).toBe(false);
+    expect(isSignedOutError(new Error('x'))).toBe(false);
+    expect(isSignedOutError(null)).toBe(false);
+    expect(isSignedOutError('not_signed_in')).toBe(false);
+  });
+});
+
+describe('reduceSession', () => {
+  it('starts with nothing known', () => {
+    expect(INITIAL_SESSION).toEqual({ identity: null, error: null, checking: false, signingIn: false });
+  });
+
+  it('marks a check as running and clears the previous error', () => {
+    const failed = reduceSession(INITIAL_SESSION, { type: 'check-failed', error: azMissing });
+    expect(reduceSession(failed, { type: 'check' })).toEqual({
+      identity: null,
+      error: null,
+      checking: true,
+      signingIn: false,
+    });
+  });
+
+  it('records the identity of a successful check', () => {
+    const checking = reduceSession(INITIAL_SESSION, { type: 'check' });
+    expect(reduceSession(checking, { type: 'checked', identity })).toEqual({
+      identity,
+      error: null,
+      checking: false,
+      signingIn: false,
+    });
+  });
+
+  it('records a failed check and forgets any identity', () => {
+    const ready = reduceSession(INITIAL_SESSION, { type: 'checked', identity });
+    expect(reduceSession(ready, { type: 'check-failed', error: notSignedIn })).toEqual({
+      identity: null,
+      error: notSignedIn,
+      checking: false,
+      signingIn: false,
+    });
+  });
+
+  it('stops a check that was cancelled without recording an outcome', () => {
+    const checking = reduceSession(INITIAL_SESSION, { type: 'check' });
+    expect(reduceSession(checking, { type: 'check-cancelled' })).toEqual(INITIAL_SESSION);
+  });
+
+  it('marks a sign-in as running', () => {
+    const signedOut = reduceSession(INITIAL_SESSION, { type: 'check-failed', error: notSignedIn });
+    expect(reduceSession(signedOut, { type: 'sign-in' })).toEqual({
+      identity: null,
+      error: null,
+      checking: false,
+      signingIn: true,
+    });
+  });
+
+  it('becomes signed in when the sign-in succeeds', () => {
+    const signingIn = reduceSession(INITIAL_SESSION, { type: 'sign-in' });
+    expect(reduceSession(signingIn, { type: 'signed-in', identity })).toEqual({
+      identity,
+      error: null,
+      checking: false,
+      signingIn: false,
+    });
+  });
+
+  it('goes back to signed out when the sign-in fails for any reason but a missing CLI', () => {
+    const signingIn = reduceSession(INITIAL_SESSION, { type: 'sign-in' });
+    for (const kind of ['cli', 'timeout', 'io', 'internal']) {
+      const next = reduceSession(signingIn, { type: 'sign-in-failed', error: { kind, message: 'x' } });
+      expect(next, kind).toEqual({
+        identity: null,
+        error: { kind: 'not_signed_in' },
+        checking: false,
+        signingIn: false,
+      });
+    }
+  });
+
+  it('keeps the missing-CLI error when the sign-in cannot start', () => {
+    const signingIn = reduceSession(INITIAL_SESSION, { type: 'sign-in' });
+    const next = reduceSession(signingIn, { type: 'sign-in-failed', error: azMissing });
+    expect(next.error).toEqual(azMissing);
+    expect(next.signingIn).toBe(false);
+  });
+
+  it('drops the identity when a later call reports the session expired', () => {
+    const ready = reduceSession(INITIAL_SESSION, { type: 'checked', identity });
+    expect(reduceSession(ready, { type: 'expired' })).toEqual({
+      identity: null,
+      error: { kind: 'not_signed_in' },
+      checking: false,
+      signingIn: false,
+    });
+  });
+
+  it('never leaves a successful call without an identity, so the panel cannot stall', () => {
+    expect(panelStage(reduceSession(INITIAL_SESSION, { type: 'checked' }))).toBe('ready');
+    expect(panelStage(reduceSession(INITIAL_SESSION, { type: 'signed-in', identity: null }))).toBe(
+      'ready'
+    );
+  });
+
+  it('never leaves a failed check without an error, so the panel cannot stall', () => {
+    for (const error of [undefined, null, '']) {
+      const next = reduceSession(INITIAL_SESSION, { type: 'check-failed', error });
+      expect(panelStage(next), String(error)).toBe('unavailable');
+    }
+  });
+
+  it('does not mutate its input and ignores unknown events', () => {
+    const before = { ...INITIAL_SESSION };
+    reduceSession(INITIAL_SESSION, { type: 'check' });
+    expect(INITIAL_SESSION).toEqual(before);
+    expect(reduceSession(INITIAL_SESSION, { type: 'nope' })).toEqual(INITIAL_SESSION);
+    expect(reduceSession(INITIAL_SESSION, undefined)).toEqual(INITIAL_SESSION);
+  });
+});
+
+describe('panelStage', () => {
+  const session = (patch) => ({ ...INITIAL_SESSION, ...patch });
+
+  it('is checking while the first status call runs or before anything is known', () => {
+    expect(panelStage(session({ checking: true }))).toBe('checking');
+    expect(panelStage(INITIAL_SESSION)).toBe('checking');
+  });
+
+  it('is ready once an identity is known', () => {
+    expect(panelStage(session({ identity }))).toBe('ready');
+  });
+
+  it('is signed-out for a not_signed_in error', () => {
+    expect(panelStage(session({ error: notSignedIn }))).toBe('signed-out');
+  });
+
+  it('is signing-in while the login runs, whatever else is known', () => {
+    expect(panelStage(session({ signingIn: true }))).toBe('signing-in');
+    expect(panelStage(session({ signingIn: true, error: notSignedIn }))).toBe('signing-in');
+  });
+
+  it('is unavailable for a missing CLI and for any other error', () => {
+    expect(panelStage(session({ error: azMissing }))).toBe('unavailable');
+    expect(panelStage(session({ error: { kind: 'timeout', message: 'x' } }))).toBe('unavailable');
+    expect(panelStage(session({ error: { kind: 'cli', message: 'x' } }))).toBe('unavailable');
+  });
+
+  it('tolerates a missing session', () => {
+    expect(panelStage(undefined)).toBe('checking');
+  });
+});
+
+describe('unavailableMessage', () => {
+  it('explains that the Azure CLI is required when it is missing', () => {
+    const text = unavailableMessage(azMissing);
+    expect(text).toMatch(/Azure CLI/);
+    expect(text).toMatch(/required/i);
+    expect(text).toMatch(/PATH/);
+  });
+
+  it('uses the shared error mapping for everything else', () => {
+    expect(unavailableMessage({ kind: 'timeout', message: 'raw' })).toBe(
+      errorMessage({ kind: 'timeout', message: 'raw' })
+    );
+    expect(unavailableMessage({ kind: 'cli', message: 'boom' })).toBe('boom');
+  });
+});
+
+describe('SESSION_EXPIRED_MESSAGE', () => {
+  it('asks the user to sign in again instead of pointing at the terminal', () => {
+    expect(SESSION_EXPIRED_MESSAGE).toMatch(/sign in again/i);
+    expect(SESSION_EXPIRED_MESSAGE).not.toMatch(/az login/);
+  });
+});
+
+describe('loginErrorMessage', () => {
+  it('says the sign-in did not finish when it timed out', () => {
+    expect(loginErrorMessage({ kind: 'timeout', message: 'raw' })).toMatch(/did not finish/i);
+  });
+
+  it('does not tell the user to run az login after a failed sign-in', () => {
+    const text = loginErrorMessage(notSignedIn);
+    expect(text).not.toMatch(/az login/);
+    expect(text).toMatch(/try again/i);
+  });
+
+  it('uses the shared mapping for other errors', () => {
+    expect(loginErrorMessage(azMissing)).toBe(errorMessage(azMissing));
+    expect(loginErrorMessage({ kind: 'cli', message: 'boom' })).toBe('boom');
+    expect(loginErrorMessage(null)).toBe('Vault request failed.');
+  });
+});
+
+describe('stageContent', () => {
+  it('offers a sign-in button and says a browser window will open when signed out', () => {
+    const content = stageContent('signed-out', notSignedIn);
+    expect(content.title).toMatch(/sign in to azure/i);
+    expect(content.hint).toMatch(/browser window will open/i);
+    expect(content.action).toEqual({ kind: 'sign-in', label: 'Sign in to Azure', disabled: false });
+  });
+
+  it('shows a waiting state with a disabled action while signing in', () => {
+    const content = stageContent('signing-in', null);
+    expect(content.title).toBe('Waiting for sign-in in your browser…');
+    expect(content.action?.kind).toBe('sign-in');
+    expect(content.action?.disabled).toBe(true);
+  });
+
+  it('shows a status line and no action while checking', () => {
+    const content = stageContent('checking', null);
+    expect(content.title).toMatch(/checking/i);
+    expect(content.action).toBeNull();
+  });
+
+  it('explains the problem and offers another check when unavailable', () => {
+    const content = stageContent('unavailable', azMissing);
+    expect(content.title).toBe(unavailableMessage(azMissing));
+    expect(content.action).toEqual({ kind: 'retry', label: 'Check again', disabled: false });
+  });
+
+  it('has no content for the ready stage', () => {
+    expect(stageContent('ready', null)).toBeNull();
   });
 });

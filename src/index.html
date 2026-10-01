@@ -13,11 +13,15 @@
       <main class="workspace">
         <aside id="sidebar" class="sidebar">
           <div class="sidebar__header">
-            <span class="sidebar__title">Files</span>
-            <span class="rail-label">Files</span>
+            <div id="sidebar-tabs" class="sidebar__tabs" role="tablist" aria-label="Sidebar" data-count="1">
+              <button id="sidebar-tab-files" class="sidebar__tab active" type="button" role="tab" data-sidebar-tab="files" aria-selected="true" aria-controls="sidebar-list">Files</button>
+              <button id="sidebar-tab-vault" class="sidebar__tab" type="button" role="tab" data-sidebar-tab="vault" aria-selected="false" aria-controls="sidebar-vault" tabindex="-1" hidden>Vault</button>
+            </div>
+            <span id="sidebar-rail-label" class="rail-label">Files</span>
             <button id="sidebar-collapse" class="icon-btn" title="Collapse Files" aria-label="Toggle Files panel" aria-expanded="true"><svg class="chevron" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><polyline points="15 6 9 12 15 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
-          <div id="sidebar-list" class="sidebar__list"></div>
+          <div id="sidebar-list" class="sidebar__list" role="tabpanel" aria-labelledby="sidebar-tab-files"></div>
+          <div id="sidebar-vault" class="sidebar__list sidebar__panel" role="tabpanel" aria-labelledby="sidebar-tab-vault" hidden></div>
         </aside>
 
         <section class="editor-pane">
@@ -49,7 +53,6 @@
             <button class="tab" data-tab="diff">Diff</button>
             <button class="tab" data-tab="convert">Convert</button>
             <button class="tab" data-tab="stats">Stats</button>
-            <button class="tab" data-tab="vault">Vault</button>
             <button class="tab" data-tab="settings">Settings</button>
           </nav>
           <div class="tab-panels" id="right-panel-panels">
@@ -58,7 +61,6 @@
             <div class="tab-panel" data-panel="diff" id="panel-diff"></div>
             <div class="tab-panel" data-panel="convert" id="panel-convert"></div>
             <div class="tab-panel" data-panel="stats" id="panel-stats"></div>
-            <div class="tab-panel" data-panel="vault" id="panel-vault"></div>
             <div class="tab-panel" data-panel="settings" id="panel-settings"></div>
           </div>
         </aside>

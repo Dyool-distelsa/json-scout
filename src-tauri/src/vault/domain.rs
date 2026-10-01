@@ -136,6 +136,10 @@ pub trait SecretProvider: Send + Sync {
     fn whoami(&self) -> Result<Identity, VaultError>;
     fn list(&self, vault: &str) -> Result<Vec<SecretSummary>, VaultError>;
     fn get(&self, secret: &SecretRef) -> Result<SecretValue, VaultError>;
+    /// Establish a session interactively (for the Azure CLI this opens the
+    /// system browser and blocks until the user finishes), then report who is
+    /// signed in. It never returns a credential.
+    fn login(&self) -> Result<Identity, VaultError>;
 }
 
 /// Accept only `^[A-Za-z0-9-]{1,127}$`, and additionally refuse a leading

@@ -65,6 +65,7 @@ pub fn run() {
             shell_integration::uninstall_context_menu,
             shell_integration::is_context_menu_installed,
             vault::commands::vault_status,
+            vault::commands::vault_login,
             vault::commands::vault_list,
             vault::commands::vault_pull,
             vault::commands::vault_clean,

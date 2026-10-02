@@ -383,6 +383,7 @@ const handlers = {
       try {
         await tauriInvoke('write_json_file', { path: state.currentPath, contents: text });
         toast.showToast('Saved.', 'success');
+        vaultPanel.refreshLocalStates();
       } catch (err) {
         toast.showToast(`Save failed: ${err}`, 'error');
       }
@@ -428,6 +429,7 @@ async function saveAsNative(text) {
     state.currentPath = path;
     updateFileName(path);
     toast.showToast('Saved.', 'success');
+    vaultPanel.refreshLocalStates();
   } catch (err) {
     toast.showToast(`Save failed: ${err}`, 'error');
   }
@@ -682,6 +684,10 @@ function onPluginToggle(id, on) {
 }
 
 showSidebarTab('files');
+
+// A pulled file can be edited and saved outside the app too; coming back to the
+// window re-reads which secrets have local edits (the panel skips it while hidden).
+window.addEventListener('focus', () => vaultPanel.refreshLocalStates());
 
 const dropzoneOverlay = document.createElement('div');
 dropzoneOverlay.className = 'dropzone-overlay';

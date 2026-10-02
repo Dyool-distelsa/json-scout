@@ -62,7 +62,11 @@ function writeRecentVaults(list) {
  *   notify: (message: string, kind?: 'success'|'error'|'info') => void,
  *   isTauri: boolean,
  * }} deps
- * @returns {{ activate: () => void, deactivate: () => void }}
+ * @returns {{
+ *   activate: () => void,
+ *   deactivate: () => void,
+ *   refreshLocalStates: () => Promise<void>,
+ * }}
  */
 export function createVaultPanel(container, { invoke, openFile, notify, isTauri }) {
   container.innerHTML = '';
@@ -73,7 +77,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     root.appendChild(
       el('p', 'vault-panel__notice', 'Azure Key Vault sync is only available in the desktop app.')
     );
-    return { activate() {}, deactivate() {} };
+    return { activate() {}, deactivate() {}, refreshLocalStates: async () => {} };
   }
 
   const state = {
@@ -84,6 +88,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     items: [],
     query: '',
     busy: null, // null | { kind: 'load' } | { kind: 'pull'|'push-preview'|'push', name }
+    itemsGen: 0, // bumped whenever the listed rows change, so a stale disk read is dropped
     confirmName: null,
     recent: readRecentVaults(),
     message: null, // { text, kind: 'error' | 'info' }
@@ -305,6 +310,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       state.session = reduceSession(state.session, { type: 'expired' });
       state.vault = null;
       state.items = [];
+      state.itemsGen += 1;
       state.confirmName = null;
       setMessage(SESSION_EXPIRED_MESSAGE, 'error');
       notify?.(SESSION_EXPIRED_MESSAGE, 'error');
@@ -382,6 +388,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       const items = await invoke('vault_list', { vault });
       state.vault = vault;
       state.items = Array.isArray(items) ? items : [];
+      state.itemsGen += 1;
       state.confirmName = null;
       remember(vault);
     } catch (err) {
@@ -425,6 +432,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
         // modified file is never overwritten without confirmation.
         const items = await invoke('vault_list', { vault });
         state.items = Array.isArray(items) ? items : state.items;
+        state.itemsGen += 1;
         const current = state.items.find((entry) => entry.name === item.name);
         if (needsPullConfirmation(current)) {
           state.confirmName = item.name;
@@ -437,6 +445,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       const result = await invoke('vault_pull', { vault, name: item.name });
       const current = state.items.find((entry) => entry.name === item.name);
       if (current) current.localState = 'clean';
+      state.itemsGen += 1;
       const opened = await openFile(result.path);
       if (opened !== false) notify?.(`Pulled "${item.name}" from ${vault}.`, 'success');
     } catch (err) {
@@ -449,6 +458,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
           ? rowFocusTargets.get(`${item.name}:cancel`)
           : rowFocusTargets.get(item.name);
       target?.focus();
+      refreshLocalStates();
     }
   }
 
@@ -504,9 +514,11 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       onPushed: ({ newVersion }) => {
         const current = state.items.find((entry) => entry.name === name);
         if (current) current.localState = 'clean';
+        state.itemsGen += 1;
         notify?.(pushSuccessMessage(name, newVersion), 'success');
         render();
         rowFocusTargets.get(name)?.focus();
+        refreshLocalStates();
       },
       // The dialog has closed itself by now (see onClosed): the stale list goes.
       onSignedOut: (err) => {
@@ -517,6 +529,85 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       // The secret is modified, so this asks before discarding the edits.
       onRepull: () => requestPull(state.items.find((entry) => entry.name === name) ?? item),
     });
+  }
+
+  // --- Local-state refresh --------------------------------------------------
+  // A row's state comes from `vault_list`, but an edit saved from the editor
+  // changes it without any listing. `vault_local_changes` answers from the local
+  // disk alone (no Azure call), so it is cheap enough to ask after every save,
+  // on focus, and when the tab comes back.
+  const canRefreshLocalStates = () => state.active && isReady() && state.vault !== null;
+  let refreshRun = null;
+  let refreshQueued = false;
+
+  /** Move the pulled rows to modified or clean; a row that is not pulled is left alone. */
+  function applyLocalChanges(changes) {
+    const modified = new Set(
+      (Array.isArray(changes) ? changes : [])
+        .filter((change) => change?.vault === state.vault)
+        .map((change) => change.name)
+    );
+    let changed = false;
+    for (const entry of state.items) {
+      if (entry.localState === 'remote') continue;
+      const next = modified.has(entry.name) ? 'modified' : 'clean';
+      if (entry.localState === next) continue;
+      entry.localState = next;
+      changed = true;
+    }
+    if (!changed) return;
+    state.itemsGen += 1;
+    // A confirmation to discard edits makes no sense once there are none.
+    const asked = state.items.find((entry) => entry.name === state.confirmName);
+    if (asked && asked.localState !== 'modified') state.confirmName = null;
+    renderListKeepingFocus();
+  }
+
+  /** Re-render the rows without dropping the keyboard focus the user is on. */
+  function renderListKeepingFocus() {
+    const focused = document.activeElement;
+    const focusKey = [...rowFocusTargets].find(([, node]) => node === focused)?.[0];
+    renderList();
+    if (focusKey === undefined) return;
+    (rowFocusTargets.get(focusKey) ?? rowFocusTargets.get(focusKey.split(':')[0]))?.focus();
+  }
+
+  async function runLocalStatesRefresh() {
+    do {
+      refreshQueued = false;
+      if (!canRefreshLocalStates()) return;
+      const generation = state.itemsGen;
+      let changes;
+      try {
+        changes = await invoke('vault_local_changes');
+      } catch {
+        // A convenience refresh: the rows stay as they were and nothing is reported.
+        return;
+      }
+      if (!canRefreshLocalStates()) return;
+      // The rows were replaced while the disk was being read: ask again.
+      if (generation !== state.itemsGen) {
+        refreshQueued = true;
+        continue;
+      }
+      applyLocalChanges(changes);
+    } while (refreshQueued);
+  }
+
+  /**
+   * Bring the rows' local state up to date from the disk. Requests made while a
+   * read is running share it and trigger one more read afterwards.
+   */
+  function refreshLocalStates() {
+    if (!canRefreshLocalStates()) return Promise.resolve();
+    if (refreshRun) {
+      refreshQueued = true;
+      return refreshRun;
+    }
+    refreshRun = runLocalStatesRefresh().finally(() => {
+      refreshRun = null;
+    });
+    return refreshRun;
   }
 
   authButton.addEventListener('click', () => {
@@ -547,6 +638,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       if (state.active) return;
       state.active = true;
       if (!isReady()) checkSession();
+      else refreshLocalStates();
     },
     /** The panel is hidden: stop issuing calls and drop a check in flight. */
     deactivate() {
@@ -559,5 +651,6 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       }
       render();
     },
+    refreshLocalStates,
   };
 }

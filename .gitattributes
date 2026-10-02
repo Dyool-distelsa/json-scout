@@ -1,0 +1,4 @@
+# The Tauri CLI rewrites Cargo.toml with LF line endings during every build.
+# Keeping it LF in the working copy stops autocrlf from reporting a phantom
+# change, which would otherwise mark every build as "-dirty".
+src-tauri/Cargo.toml text eol=lf

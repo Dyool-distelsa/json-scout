@@ -87,6 +87,9 @@
   --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--focus-ring-color);
   --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-toast: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  /* How much of the toast surface is opaque. The rest lets the blurred app show
+     through; the text stays fully opaque, so it reads in both themes. */
+  --toast-surface-mix: 85%;
 }
 
 :root[data-theme='light'] {
@@ -412,8 +415,7 @@ button.tool-btn:active {
 /* Glass surface for floating layers; solid fallback above where unsupported. */
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dropdown-menu,
-  .plugins-popover,
-  .toast {
+  .plugins-popover {
     background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
     backdrop-filter: blur(14px) saturate(140%);
@@ -561,18 +563,16 @@ button.tool-btn:active {
 }
 
 /* Toast notifications (non-blocking, stacked, auto-dismissing).
-   Anchored TOP-RIGHT (T1): the container's own top edge is pinned, so it
-   grows downward as toasts stack. flex-direction is plain `column` (not
-   `column-reverse`) on purpose: the first (oldest still-visible) toast
-   stays closest to the pinned top edge and does not move when a new one
-   arrives, while each new toast is appended into the newly available
-   space below — the same "anchor stays put, stack grows away from it"
-   behavior the previous bottom-right/column-reverse layout had, mirrored
-   for the new anchor. */
+   Anchored BOTTOM-RIGHT, just above the status bar, so a toast never covers
+   the editor's Copy button or the toolbar. The container's bottom edge is
+   pinned and flex-direction is plain `column` (oldest first): a new toast is
+   appended at the bottom, nearest the corner, and the older ones are pushed
+   up, so the stack grows upward. The container and the toast body let every
+   click through; only a toast's own buttons (close, any action) take them. */
 .toast-container {
   position: fixed;
   right: var(--space-5);
-  top: var(--space-5);
+  bottom: calc(var(--statusbar-height) + var(--space-4));
   z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
@@ -597,12 +597,13 @@ button.tool-btn:active {
   font-size: var(--text-md);
   font-weight: 500;
   box-shadow: var(--shadow-toast);
-  pointer-events: auto;
+  /* Never intercept a click: whatever is underneath stays usable. Buttons
+     inside the toast opt back in below. */
+  pointer-events: none;
   opacity: 0;
-  /* Entrance slides DOWN into place from above the anchor (T1) — the
-     mirror image of the old bottom-anchored toast, which rose up from
-     below. Leaving still retreats upward (unchanged): see .toast--leaving. */
-  transform: translateY(-18px) scale(0.94);
+  /* Entrance rises into place from below, out of the corner. Leaving drifts
+     back toward it: see .toast--leaving. */
+  transform: translateY(18px) scale(0.94);
   transition: opacity var(--motion-duration-base) var(--motion-ease-decelerate),
     transform var(--motion-duration-base) var(--motion-ease-decelerate),
     height var(--motion-duration-base) var(--motion-ease-standard),
@@ -617,7 +618,7 @@ button.tool-btn:active {
 
 .toast--leaving {
   opacity: 0;
-  transform: translateY(-6px) scale(0.96);
+  transform: translateY(6px) scale(0.96);
   /* Sequence the exit: fade and drift out over --motion-duration-exit
      FIRST, and only then collapse the box (height/padding) so the stack
      closes the gap afterwards. Running both at once made the toast shrink
@@ -627,6 +628,23 @@ button.tool-btn:active {
     height var(--motion-duration-base) var(--motion-ease-standard) var(--motion-duration-exit),
     padding-top var(--motion-duration-base) var(--motion-ease-standard) var(--motion-duration-exit),
     padding-bottom var(--motion-duration-base) var(--motion-ease-standard) var(--motion-duration-exit);
+}
+
+/* Translucent glass for the whole life of the toast (solid surface above where
+   backdrop-filter is unsupported). It sits after the base rule on purpose: the
+   base `background` would otherwise win by source order. The exit fade starts
+   from this state, since only the surface is translucent, never the text. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .toast {
+    background: color-mix(in srgb, var(--color-bg-elevated) var(--toast-surface-mix), transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+  }
+}
+
+/* The close button and any action button are the only parts that take clicks. */
+.toast button {
+  pointer-events: auto;
 }
 
 .toast--success {
@@ -667,6 +685,7 @@ button.tool-btn:active {
 }
 
 .toast__close {
+  pointer-events: auto;
   flex-shrink: 0;
   background: transparent;
   border: none;

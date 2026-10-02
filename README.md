@@ -61,6 +61,10 @@ All of this is registered under `HKEY_CURRENT_USER` only — installing it never
 
 A second click of any "Open in JSON Scout" / "JSON Scout here" entry reuses the already-running window instead of spawning a new process (via `tauri-plugin-single-instance`).
 
+## Azure Key Vault plugin (optional)
+
+An optional plugin, off by default, that pulls secrets from an Azure Key Vault into the editor, lets you edit them and push a new version back after a masked review. It uses your existing Azure CLI (`az`) session and never reads or stores tokens. Turn it on from the toolbar **Plugins** menu; see the [Azure Key Vault guide](docs/azure-key-vault.md) for requirements, permissions, sign-in and troubleshooting.
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+ and npm
@@ -140,6 +144,8 @@ src-tauri/              Rust backend (Tauri v2)
 odd/tasks/              Per-feature task documents (scope, tasks, verification evidence)
 
 scripts/                 Standalone PowerShell fallback for the context-menu install
+
+docs/                    User guides (docs/azure-key-vault.md)
 ```
 
 ## Known limitations

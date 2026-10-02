@@ -421,6 +421,106 @@ describe('window resize', () => {
   });
 });
 
+describe('preferred widths survive a narrow window', () => {
+  const narrowThenWiden = (interact) => {
+    mount({ stored: { sidebar: 400, right: 480 } });
+    windowWidth = 900;
+    window.dispatchEvent(new Event('resize'));
+    frames.shift()();
+    // Both panels were squeezed to fit.
+    expect(parseInt(rightWidth(), 10)).toBeLessThan(480);
+    interact();
+    windowWidth = 1600;
+    window.dispatchEvent(new Event('resize'));
+    frames.shift()();
+  };
+
+  it('keeps the other panel preferred width after a keyboard resize', () => {
+    narrowThenWiden(() => press(sidebarSplitter, 'ArrowLeft'));
+    expect(rightWidth()).toBe('480px');
+    expect(stored().right).toBe(480);
+    expect(parseInt(sidebarWidth(), 10)).toBeLessThan(400);
+  });
+
+  it('keeps the other panel preferred width after a drag', () => {
+    narrowThenWiden(() => {
+      pointer(rightSplitter, 'pointerdown', 700);
+      pointer(rightSplitter, 'pointermove', 710);
+      pointer(rightSplitter, 'pointerup', 710);
+    });
+    expect(sidebarWidth()).toBe('400px');
+    expect(stored().sidebar).toBe(400);
+  });
+
+  it('keeps the other panel preferred width after a double-click reset', () => {
+    narrowThenWiden(() => sidebarSplitter.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+    expect(sidebarWidth()).toBe(`${DEFAULT_LAYOUT.sidebar}px`);
+    expect(rightWidth()).toBe('480px');
+  });
+});
+
+describe('a panel that collapses mid-drag', () => {
+  it('ends the drag, releases the pointer and clears the body marker', () => {
+    const splitters = mount();
+    sidebarSplitter.setPointerCapture = vi.fn();
+    sidebarSplitter.releasePointerCapture = vi.fn();
+    pointer(sidebarSplitter, 'pointerdown', 100);
+    pointer(sidebarSplitter, 'pointermove', 140);
+    expect(document.body.classList.contains('is-resizing')).toBe(true);
+
+    sidebar.classList.add('collapsed');
+    splitters.sync();
+
+    expect(document.body.classList.contains('is-resizing')).toBe(false);
+    expect(sidebarSplitter.classList.contains('splitter--active')).toBe(false);
+    expect(sidebarSplitter.releasePointerCapture).toHaveBeenCalledWith(1);
+    // What was dragged so far is kept as the width to return to.
+    expect(stored().sidebar).toBe(DEFAULT_LAYOUT.sidebar + 40);
+  });
+
+  it('ignores pointer movement for the collapsed panel afterwards', () => {
+    const splitters = mount();
+    pointer(sidebarSplitter, 'pointerdown', 100);
+    sidebar.classList.add('collapsed');
+    splitters.sync();
+    storage.setItem.mockClear();
+
+    pointer(sidebarSplitter, 'pointermove', 300);
+    pointer(sidebarSplitter, 'pointerup', 300);
+    expect(sidebarWidth()).toBe(`${DEFAULT_LAYOUT.sidebar}px`);
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('ignores a pointermove that arrives for a collapsed panel before sync ran', () => {
+    mount();
+    pointer(sidebarSplitter, 'pointerdown', 100);
+    sidebar.classList.add('collapsed');
+    pointer(sidebarSplitter, 'pointermove', 300);
+    expect(sidebarWidth()).toBe(`${DEFAULT_LAYOUT.sidebar}px`);
+  });
+
+  it('does not end the other panel drag when an unrelated panel collapses', () => {
+    const splitters = mount();
+    pointer(sidebarSplitter, 'pointerdown', 100);
+    rightPanel.classList.add('collapsed');
+    splitters.sync();
+    expect(document.body.classList.contains('is-resizing')).toBe(true);
+  });
+});
+
+describe('sidebar splitter label', () => {
+  it('follows the active sidebar tab', () => {
+    const splitters = mount();
+    expect(sidebarSplitter.getAttribute('aria-label')).toBe('Resize Files panel');
+    splitters.setSidebarLabel('Vault');
+    expect(sidebarSplitter.getAttribute('aria-label')).toBe('Resize Vault panel');
+    splitters.setSidebarLabel('Files');
+    expect(sidebarSplitter.getAttribute('aria-label')).toBe('Resize Files panel');
+    // The right-hand handle always resizes the tools.
+    expect(rightSplitter.getAttribute('aria-label')).toBe('Resize Tools panel');
+  });
+});
+
 describe('destroy', () => {
   it('detaches every listener', () => {
     const splitters = mount();

@@ -71,6 +71,25 @@ describe('toast surface', () => {
     expect(effective('.toast--visible', 'opacity')).toBe('1');
     expect(effective('.toast', 'color')).toBe('var(--color-text)');
   });
+
+  it('never gives the text colour an alpha, mix or transparent component', () => {
+    // Whatever declaration wins, and any other that could win, must be a plain
+    // colour: the glass effect belongs to the background only.
+    const alpha = /color-mix|transparent|rgba\(|hsla\(|(?:rgb|hsl|oklch|oklab|lab|lch|hwb)\([^)]*\/|#[0-9a-f]{4}\b|#[0-9a-f]{8}\b/i;
+    const colors = declarations('.toast')
+      .filter(([name]) => name === 'color')
+      .map(([, value]) => value);
+    expect(colors.length).toBeGreaterThan(0);
+    for (const value of colors) expect(value).not.toMatch(alpha);
+    expect(effective('.toast', 'color')).not.toMatch(alpha);
+    // Nothing inside dims the message text either.
+    for (const selector of ['.toast__message', '.toast--visible']) {
+      for (const value of declarations(selector).filter(([name]) => name === 'color').map(([, v]) => v)) {
+        expect(value).not.toMatch(alpha);
+      }
+    }
+    expect(effective('.toast__message', 'opacity')).toBeUndefined();
+  });
 });
 
 describe('toast motion', () => {

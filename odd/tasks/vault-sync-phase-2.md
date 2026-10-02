@@ -189,6 +189,19 @@ compare, and creating or deleting secrets.
       line: no restore after a failed read (1 failure), `set` on a conflict
       (the strengthened retry test among 5), a push that never reaches `set`
       (racing test fails after 5 s). JS 610 -> 626 tests, Rust 252 -> 253.
+- [x] P9 — Push appears after saving (found in the user's beta test: a row's
+      state only changed on Load, so Push stayed hidden after an edit was saved).
+      The panel exposes `refreshLocalStates()`, which reads `vault_local_changes`
+      (local disk, no Azure call) and flips pulled rows to `modified` or `clean`
+      (remote rows and other vaults are never touched). Triggers: after Ctrl+S /
+      Save / Save As (main.js), window focus (main.js), tab activation, and the
+      end of a pull or a push (panel). Skipped while hidden, signed out or with
+      no vault listed; concurrent requests share one read plus one follow-up; a
+      result that predates a newer listing is dropped and re-read; a failed read
+      is silent; keyboard focus survives the re-render.
+      Evidence: `src/ui/vaultPanel.localStates.dom.test.js` (14 tests). RED
+      against a no-op stub: 7 of 14 failed on assertions (the other 7 are
+      negative cases that a no-op satisfies). GREEN: 14 of 14; full suite 735.
 
 ## Route per task
 | Task | Route | Trigger evidence |

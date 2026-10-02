@@ -1284,6 +1284,16 @@ body.is-resizing .right-panel {
   color: var(--color-text-dim);
 }
 
+/* Which build is running; pinned to the right corner and kept quiet. */
+.statusbar__build {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--color-text-dim);
+  opacity: 0.8;
+  user-select: text;
+  cursor: default;
+}
+
 .statusbar__filename {
   font-weight: 500;
   color: var(--color-text);

@@ -57,9 +57,14 @@ Out of scope: resizing the diff split, vertical splits, layout presets.
       stub: 48 of 50 failed on assertions. GREEN: 50 of 50 pass. Limits mirror
       the CSS: sidebar 140-400 (default 220), right panel 220-480 (default
       320), editor minimum 320, collapsed rail 32.
-- [ ] L2 — Splitter DOM wiring for both panels (pointer drag, keyboard,
+- [x] L2 — Splitter DOM wiring for both panels (pointer drag, keyboard,
       double-click reset, ARIA, persistence, collapse interplay, window
       resize), with jsdom tests.
+      Evidence: `src/ui/splitters.js` + `splitters.dom.test.js` (31 jsdom tests),
+      wired in `main.js` and `index.html`, styled in `main.css`. RED against a
+      no-op stub: 28 of 31 failed on assertions. GREEN: 31 of 31; full suite
+      707 pass; `npm run build` ok. CSS (hit area, hover/focus line, drag
+      class) is not unit-testable; needs the visual check.
 - [ ] L3 — Toast container bottom-right above the status bar, translucent glass,
       click-through except controls; update any toast tests or positions; the
       exit animation stays sequenced (fade, then collapse).

@@ -37,6 +37,7 @@ import { processPastedJson } from './tools/pastePipeline.js';
 import { escapeString, unescapeString } from './tools/escape.js';
 import { utf8ByteLength, formatBytes, computeMinifySaving, computeFormatGrowth } from './tools/jsonUtils.js';
 import { mountToastContainer } from './ui/toast.js';
+import { mountSplitters } from './ui/splitters.js';
 import { isTauriRuntime, deriveDisplayFileName } from './ui/runtime.js';
 import { debounce } from './ui/debounce.js';
 import { isCopyable, copyText } from './ui/clipboard.js';
@@ -562,9 +563,10 @@ createToolbar(document.getElementById('toolbar'), handlers, {
  * @param {string} panelId
  * @param {string} buttonId
  * @param {() => string} getLabel
+ * @param {() => void} [onToggle] Called after the panel collapses or expands.
  * @returns {{ sync: () => void, setCollapsed: (collapsed: boolean) => void }}
  */
-function wireCollapse(panelId, buttonId, getLabel) {
+function wireCollapse(panelId, buttonId, getLabel, onToggle = () => {}) {
   const panel = document.getElementById(panelId);
   const button = document.getElementById(buttonId);
   const header = button.parentElement;
@@ -579,6 +581,7 @@ function wireCollapse(panelId, buttonId, getLabel) {
   function toggle() {
     panel.classList.toggle('collapsed');
     sync();
+    onToggle();
   }
   header.addEventListener('click', (event) => {
     const collapsed = panel.classList.contains('collapsed');
@@ -590,12 +593,25 @@ function wireCollapse(panelId, buttonId, getLabel) {
     setCollapsed(collapsed) {
       panel.classList.toggle('collapsed', collapsed);
       sync();
+      onToggle();
     },
   };
 }
 
-const sidebarCollapse = wireCollapse('sidebar', 'sidebar-collapse', () => sidebarTabLabel(sidebarTab));
-const rightPanelCollapse = wireCollapse('right-panel', 'right-panel-collapse', () => 'Tools');
+// Resizable side panels. The splitters publish the widths as CSS custom
+// properties and need to hear about collapse changes (a collapsed panel is a
+// rail with nothing to resize), so they are mounted before the collapse wiring.
+const splitters = mountSplitters({
+  workspace: document.querySelector('.workspace'),
+  sidebar: document.getElementById('sidebar'),
+  rightPanel: document.getElementById('right-panel'),
+  sidebarSplitter: document.getElementById('sidebar-splitter'),
+  rightSplitter: document.getElementById('right-splitter'),
+  storage: pluginStorage(),
+});
+
+const sidebarCollapse = wireCollapse('sidebar', 'sidebar-collapse', () => sidebarTabLabel(sidebarTab), splitters.sync);
+const rightPanelCollapse = wireCollapse('right-panel', 'right-panel-collapse', () => 'Tools', splitters.sync);
 const toggleSidebar = sidebarCollapse.toggle;
 const toggleRightPanel = rightPanelCollapse.toggle;
 

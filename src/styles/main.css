@@ -734,6 +734,78 @@ button.tool-btn:active {
   min-height: 0;
 }
 
+/* Splitters between the panels and the editor (see ui/splitters.js). Each is a
+   zero-width flex item on the panel edge, so it takes no layout space; the hit
+   area and the visible line hang off pseudo-elements and straddle the edge.
+   The widths themselves come from --sidebar-width / --right-panel-width,
+   which the splitters set on .workspace. */
+.splitter {
+  position: relative;
+  flex: 0 0 0;
+  width: 0;
+  z-index: var(--z-raised);
+  cursor: col-resize;
+  outline: none;
+  touch-action: none;
+}
+
+.splitter[hidden] {
+  display: none;
+}
+
+/* 8px hit area, biased away from the editor's scrollbar. */
+.splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+}
+
+.splitter--sidebar::before {
+  left: -2px;
+}
+
+.splitter--right::before {
+  left: -6px;
+}
+
+.splitter::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.splitter:hover::after,
+.splitter--active::after {
+  opacity: 0.6;
+}
+
+.splitter:focus-visible::after {
+  opacity: 1;
+  width: 3px;
+}
+
+/* While dragging, the panels follow the pointer without lag and nothing gets
+   selected under it. */
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.is-resizing .sidebar,
+body.is-resizing .right-panel {
+  transition: none;
+}
+
 .sidebar {
   width: var(--sidebar-width);
   min-width: 140px;

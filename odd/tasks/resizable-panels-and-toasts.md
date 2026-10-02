@@ -65,9 +65,18 @@ Out of scope: resizing the diff split, vertical splits, layout presets.
       no-op stub: 28 of 31 failed on assertions. GREEN: 31 of 31; full suite
       707 pass; `npm run build` ok. CSS (hit area, hover/focus line, drag
       class) is not unit-testable; needs the visual check.
-- [ ] L3 — Toast container bottom-right above the status bar, translucent glass,
+- [x] L3 — Toast container bottom-right above the status bar, translucent glass,
       click-through except controls; update any toast tests or positions; the
       exit animation stays sequenced (fade, then collapse).
+      Evidence: CSS-contract tests in `src/ui/toastStyles.test.js` (reads
+      main.css) and DOM-contract tests in `src/ui/toast.dom.test.js`. RED: 5 of
+      the 10 CSS-contract tests failed on assertions (top anchor, pointer-events
+      auto, solid surface, downward transforms); the DOM tests pass as
+      characterisation. GREEN: 14 of 14; full suite 721 pass; `npm run build`
+      ok. Found while testing: the old glass rule for `.toast` was overridden by
+      the later base `background`, so toasts were solid; the new rule sits after
+      the base. Surface mix is 85% (`--toast-surface-mix`); text stays opaque.
+      Needs the visual check in both themes.
 
 ## Applicable checks
 - `npm test`

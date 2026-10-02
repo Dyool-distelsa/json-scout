@@ -38,7 +38,12 @@ const ACTIVE_SPLITTER_CLASS = 'splitter--active';
  *   cancelFrame?: (handle: unknown) => void,
  *   windowTarget?: Window,
  * }} options
- * @returns {{ sync: () => void, destroy: () => void, getWidths: () => { sidebar: number, right: number } }}
+ * @returns {{
+ *   sync: () => void,
+ *   destroy: () => void,
+ *   getWidths: () => { sidebar: number, right: number },
+ *   setSidebarLabel: (name: string) => void,
+ * }}
  */
 export function mountSplitters({
   workspace,
@@ -89,6 +94,8 @@ export function mountSplitters({
   /** Fit the preferred widths to the window and reflect them on the page. */
   function apply() {
     const ctx = context();
+    // A panel that collapsed under an active drag has nothing left to drag.
+    if (drag && ctx.collapsed[drag.entry.name]) endDrag(true);
     applied = clampLayout(preferred, ctx);
     for (const entry of panels) {
       const { name, splitter, cssVar } = entry;
@@ -106,9 +113,14 @@ export function mountSplitters({
     }
   }
 
-  /** Move one panel to `width` (clamped); persist when asked. */
+  /**
+   * Move one panel to `width` (clamped); persist when asked. Only this panel's
+   * preference changes: the other keeps what the user chose even while the
+   * window is too narrow to show it, so growing the window restores it.
+   */
   function setWidth(entry, width, { persist }) {
-    preferred = resizePanel(entry.name, applied, width, context());
+    const resized = resizePanel(entry.name, applied, width, context());
+    preferred = { ...preferred, [entry.name]: resized[entry.name] };
     apply();
     if (persist) saveLayout(storage, preferred);
   }
@@ -120,8 +132,13 @@ export function mountSplitters({
 
   function endDrag(persist) {
     if (!drag) return;
-    const { entry, moved } = drag;
+    const { entry, moved, pointerId } = drag;
     drag = null;
+    try {
+      entry.splitter.releasePointerCapture?.(pointerId);
+    } catch {
+      // The pointer is already gone or was never captured; nothing to release.
+    }
     entry.splitter.classList.remove(ACTIVE_SPLITTER_CLASS);
     workspace.ownerDocument.body.classList.remove(DRAGGING_BODY_CLASS);
     if (persist && moved) saveLayout(storage, preferred);
@@ -162,7 +179,7 @@ export function mountSplitters({
     });
 
     listen(splitter, 'pointermove', (event) => {
-      if (!drag || drag.entry !== entry || event.pointerId !== drag.pointerId) return;
+      if (!drag || drag.entry !== entry || event.pointerId !== drag.pointerId || isCollapsed(entry)) return;
       drag.moved = true;
       setWidth(entry, drag.startWidth + entry.direction * (event.clientX - drag.startX), { persist: false });
     });
@@ -189,6 +206,10 @@ export function mountSplitters({
     /** Re-read the collapsed state (and the window) after the caller toggled a panel. */
     sync: apply,
     getWidths: () => ({ ...applied }),
+    /** Name the left handle after what the sidebar currently shows (Files, Vault). */
+    setSidebarLabel(name) {
+      sidebarSplitter.setAttribute('aria-label', `Resize ${name} panel`);
+    },
     destroy() {
       endDrag(false);
       if (frame !== null) cancelFrame(frame);

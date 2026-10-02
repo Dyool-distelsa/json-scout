@@ -77,6 +77,20 @@ Out of scope: resizing the diff split, vertical splits, layout presets.
       the later base `background`, so toasts were solid; the new rule sits after
       the base. Surface mix is 85% (`--toast-surface-mix`); text stays opaque.
       Needs the visual check in both themes.
+- [x] L4 — Splitter review advisories. (1) `setWidth` updates only the dragged
+      panel's preferred width, so the other panel returns to its own preference
+      when the window grows back. (2) A drag ends (pointer released, body marker
+      and active class removed, drag so far kept) when its panel collapses, and
+      `pointermove` is ignored for a collapsed panel. (3) The left handle's label
+      follows the sidebar tab via `setSidebarLabel(name)`, called from
+      `showSidebarTab` ("Resize Files panel" / "Resize Vault panel"). (4)
+      `toastStyles.test.js` now rejects any `color-mix`, `transparent`, rgba/hsla,
+      slash-alpha or 4/8-digit hex in the toast text colour declarations, and any
+      opacity on the message.
+      Evidence: RED: 7 new `splitters.dom.test.js` tests failed on assertions
+      (3 preferred-width, 3 mid-drag collapse, 1 label). GREEN: 39 of 39. The
+      strengthened CSS test was checked by mutation: turning the `.toast` text
+      colour into a `color-mix(... transparent)` fails 2 tests; restored, 11 of 11.
 
 ## Applicable checks
 - `npm test`

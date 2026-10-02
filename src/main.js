@@ -652,6 +652,7 @@ function showSidebarTab(requested, { focus = false } = {}) {
   // With a single tab the strip reads as a plain title.
   sidebarTabsEl.dataset.count = String(visible.length);
   sidebarRailLabel.textContent = sidebarTabLabel(sidebarTab);
+  splitters.setSidebarLabel(sidebarTabLabel(sidebarTab));
   sidebarCollapse.sync();
   if (sidebarTab === 'vault') vaultPanel.activate();
   else vaultPanel.deactivate();

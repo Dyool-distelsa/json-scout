@@ -1,11 +1,15 @@
 import { formatBytes } from '../tools/jsonUtils.js';
+import { formatBuildTag, readBuildInfo } from './buildTag.js';
 
 /**
  * Build and control the bottom status bar:
- * valid/invalid indicator, cursor line:col, byte size, parse time.
+ * valid/invalid indicator, cursor line:col, byte size, parse time, and, in the
+ * bottom-right corner, which build is running.
  * @param {HTMLElement} container
+ * @param {{ build?: import('./buildTag.js').BuildInfo }} [options] `build`
+ *   defaults to the constants injected at build time.
  */
-export function createStatusBar(container) {
+export function createStatusBar(container, { build = readBuildInfo() } = {}) {
   container.innerHTML = '';
 
   const fileName = document.createElement('div');
@@ -35,6 +39,13 @@ export function createStatusBar(container) {
   container.appendChild(cursor);
   container.appendChild(size);
   container.appendChild(parseTime);
+
+  const buildTag = document.createElement('div');
+  buildTag.className = 'statusbar__build';
+  const tag = formatBuildTag(build);
+  buildTag.textContent = tag.text;
+  buildTag.title = tag.title;
+  container.appendChild(buildTag);
 
   // Tracks the last-rendered valid/name state purely so the transient
   // "flip" animation only plays on an actual change, not on every

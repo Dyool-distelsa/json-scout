@@ -202,6 +202,20 @@ compare, and creating or deleting secrets.
       Evidence: `src/ui/vaultPanel.localStates.dom.test.js` (14 tests). RED
       against a no-op stub: 7 of 14 failed on assertions (the other 7 are
       negative cases that a no-op satisfies). GREEN: 14 of 14; full suite 735.
+- [x] P10 — Version tag in the status bar's bottom-right corner (the user wants
+      to know which build they are testing). `v<version> · <short sha>`, with the
+      full sha and build date as the tooltip. `vite.config.js` injects
+      `__APP_VERSION__`, `__APP_COMMIT__` (`-dirty` when `git status --porcelain`
+      is not empty), `__APP_COMMIT_FULL__` and `__APP_BUILD_DATE__` through
+      `define`; git failures fall back to `unknown`. Version source:
+      `src-tauri/tauri.conf.json` (the installer's version), then `package.json`;
+      both are 0.2.2 today. `src/ui/buildTag.js` has the pure formatter and a
+      `typeof`-guarded reader, so a context without the defines still renders.
+      Evidence: `buildTag.test.js` + `statusbar.dom.test.js` (10 tests). RED
+      against stubs: 10 of 10 failed on assertions. GREEN: 10 of 10; full suite
+      745; `npm run build` ok and the bundle holds `67ea38d-dirty` and `0.2.2`.
+      A working tree with any uncommitted change, including the line-ending-only
+      `src-tauri/Cargo.toml`, tags the build `-dirty`.
 
 ## Route per task
 | Task | Route | Trigger evidence |

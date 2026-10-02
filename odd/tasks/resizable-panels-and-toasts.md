@@ -50,9 +50,13 @@ Out of scope: resizing the diff split, vertical splits, layout presets.
   - Light and dark themes must stay readable.
 
 ## Tasks
-- [ ] L1 — Pure layout model with tests: clamp widths against window width,
+- [x] L1 — Pure layout model with tests: clamp widths against window width,
       panel min/max and editor min; parse and serialise persisted layout
       tolerantly; keyboard step logic.
+      Evidence: `src/ui/layout.js` + `layout.test.js`. RED against an empty
+      stub: 48 of 50 failed on assertions. GREEN: 50 of 50 pass. Limits mirror
+      the CSS: sidebar 140-400 (default 220), right panel 220-480 (default
+      320), editor minimum 320, collapsed rail 32.
 - [ ] L2 — Splitter DOM wiring for both panels (pointer drag, keyboard,
       double-click reset, ARIA, persistence, collapse interplay, window
       resize), with jsdom tests.

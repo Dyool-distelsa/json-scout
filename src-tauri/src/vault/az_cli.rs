@@ -7,11 +7,13 @@
 //! account lookup and the interactive `az login`. Every vault and secret name
 //! is validated before it can reach an argument or a file is written.
 //!
-//! Error values are built from fixed text or a short first line of stderr;
-//! stdout (which carries secret values) is never copied into an error.
+//! Error values and diagnostics use fixed, allowlisted categories; stderr is
+//! inspected only for classification, and stdout (which carries secret values)
+//! is never copied into an error.
 
 use super::domain::{
-    validate_name, Identity, SecretProvider, SecretRef, SecretSummary, SecretValue, VaultError,
+    validate_name, Identity, SecretProvider, SecretRef, SecretSummary, SecretValue,
+    VaultDiagnostic, VaultError, VaultFailureReason, VaultOperation,
 };
 use super::json_text;
 use serde_json::Value;
@@ -21,9 +23,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-
-/// Longest stderr excerpt kept in a [`VaultError::Cli`] message.
-const MAX_SUMMARY_CHARS: usize = 300;
 
 /// Upper bound on one `az` invocation.
 pub const AZ_TIMEOUT: Duration = Duration::from_secs(60);
@@ -47,6 +46,8 @@ pub fn az_program() -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CmdOutput {
     pub status_ok: bool,
+    /// The numeric process exit status when the platform provides one.
+    pub status_code: Option<i32>,
     /// Raw bytes: decoded strictly by the caller, because stdout carries
     /// secret values and must never be lossily rewritten.
     pub stdout: Vec<u8>,
@@ -152,6 +153,7 @@ impl CommandRunner for SystemRunner {
         let stderr = collect(&stderr, deadline)?;
         Ok(CmdOutput {
             status_ok: status.success(),
+            status_code: status.code(),
             stdout,
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
         })
@@ -297,42 +299,89 @@ impl<R: CommandRunner> AzCliProvider<R> {
     /// Run `az` and return its output of a successful exit; a spawn failure
     /// or a non-zero exit is mapped to a [`VaultError`]. `timeout` overrides
     /// the runner's default when given.
-    fn execute(&self, args: &[String], timeout: Option<Duration>) -> Result<CmdOutput, VaultError> {
+    fn execute(
+        &self,
+        args: &[String],
+        timeout: Option<Duration>,
+        operation: VaultOperation,
+    ) -> Result<CmdOutput, VaultError> {
         let result = match timeout {
             Some(timeout) => self.runner.run_with_timeout(az_program(), args, timeout),
             None => self.runner.run(az_program(), args),
         };
         let output = match result {
             Ok(output) => output,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Err(VaultError::AzMissing),
-            Err(err) if err.kind() == io::ErrorKind::TimedOut => return Err(VaultError::Timeout),
-            Err(err) => return Err(VaultError::Io(err.to_string())),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                return Err(VaultError::AzMissing.with_diagnostic(VaultDiagnostic::new(
+                    operation,
+                    VaultFailureReason::AzMissing,
+                )))
+            }
+            Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                return Err(VaultError::Timeout.with_diagnostic(
+                    VaultDiagnostic::new(operation, VaultFailureReason::Timeout).with_timeout(),
+                ))
+            }
+            // Do not expose the OS error: it can contain a staged path or
+            // other machine-specific data.
+            Err(_) => {
+                return Err(VaultError::Io("Azure CLI could not be started.".into())
+                    .with_diagnostic(VaultDiagnostic::new(
+                        operation,
+                        VaultFailureReason::IoFailure,
+                    )))
+            }
         };
         if !output.status_ok {
-            return Err(map_failure(&output.stderr));
+            let error = map_failure(&output.stderr);
+            let reason = failure_reason(&error);
+            return Err(error.with_diagnostic(
+                VaultDiagnostic::new(operation, reason).with_exit_status(output.status_code),
+            ));
         }
         Ok(output)
     }
 
     /// Run `az` with `args` and parse its stdout as JSON.
-    fn run_json(&self, args: Vec<String>) -> Result<Value, VaultError> {
-        let output = self.execute(&args, None)?;
+    fn run_json(&self, args: Vec<String>, operation: VaultOperation) -> Result<Value, VaultError> {
+        let output = self.execute(&args, None, operation)?;
         // The serde_json error text can quote the offending input, which may
         // hold a secret value, so it is deliberately dropped.
         // Strict decoding: a lossy one would silently rewrite secret bytes.
-        let stdout = std::str::from_utf8(&output.stdout).map_err(|_| VaultError::Parse)?;
-        serde_json::from_str(stdout).map_err(|_| VaultError::Parse)
+        let stdout = std::str::from_utf8(&output.stdout).map_err(|_| {
+            VaultError::Parse.with_diagnostic(VaultDiagnostic::new(
+                operation,
+                VaultFailureReason::InvalidUtf8,
+            ))
+        })?;
+        serde_json::from_str(stdout).map_err(|error| {
+            VaultError::Parse.with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::InvalidJson)
+                    .with_position(error.line(), error.column()),
+            )
+        })
     }
 }
 
 impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
     fn whoami(&self) -> Result<Identity, VaultError> {
-        let account = self.run_json(to_args(&["account", "show", "-o", "json"]))?;
-        let user = account["user"]["name"].as_str().ok_or(VaultError::Parse)?;
+        let operation = VaultOperation::AccountShow;
+        let account = self.run_json(to_args(&["account", "show", "-o", "json"]), operation)?;
+        let user = account["user"]["name"].as_str().ok_or_else(|| {
+            VaultError::Parse.with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::MissingField)
+                    .with_field("user.name"),
+            )
+        })?;
         let subscription = account["name"]
             .as_str()
             .or_else(|| account["id"].as_str())
-            .ok_or(VaultError::Parse)?;
+            .ok_or_else(|| {
+                VaultError::Parse.with_diagnostic(
+                    VaultDiagnostic::new(operation, VaultFailureReason::MissingField)
+                        .with_field("name_or_id"),
+                )
+            })?;
         Ok(Identity {
             user: user.to_string(),
             subscription: subscription.to_string(),
@@ -340,25 +389,47 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
     }
 
     fn list(&self, vault: &str) -> Result<Vec<SecretSummary>, VaultError> {
-        validate_name(vault)?;
-        let listing = self.run_json(to_args(&[
-            "keyvault",
-            "secret",
-            "list",
-            "--vault-name",
-            vault,
-            "--query",
-            "[].{name:name,enabled:attributes.enabled}",
-            "-o",
-            "json",
-        ]))?;
+        let operation = VaultOperation::SecretList;
+        validate_name(vault).map_err(|error| {
+            error.with_diagnostic(VaultDiagnostic::new(
+                operation,
+                VaultFailureReason::InvalidName,
+            ))
+        })?;
+        let listing = self.run_json(
+            to_args(&[
+                "keyvault",
+                "secret",
+                "list",
+                "--vault-name",
+                vault,
+                "--query",
+                "[].{name:name,enabled:attributes.enabled}",
+                "-o",
+                "json",
+            ]),
+            operation,
+        )?;
         listing
             .as_array()
-            .ok_or(VaultError::Parse)?
+            .ok_or_else(|| {
+                VaultError::Parse.with_diagnostic(VaultDiagnostic::new(
+                    operation,
+                    VaultFailureReason::InvalidShape,
+                ))
+            })?
             .iter()
             .map(|item| {
                 Ok(SecretSummary {
-                    name: item["name"].as_str().ok_or(VaultError::Parse)?.to_string(),
+                    name: item["name"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            VaultError::Parse.with_diagnostic(
+                                VaultDiagnostic::new(operation, VaultFailureReason::MissingField)
+                                    .with_field("name"),
+                            )
+                        })?
+                        .to_string(),
                     enabled: item["enabled"].as_bool().unwrap_or(true),
                 })
             })
@@ -369,27 +440,59 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
         // `-o none` keeps stdout empty; whatever it prints (an account
         // listing) is dropped unread. The CLI stores the session itself, and
         // this app never sees a token.
-        self.execute(&to_args(&["login", "-o", "none"]), Some(LOGIN_TIMEOUT))?;
+        self.execute(
+            &to_args(&["login", "-o", "none"]),
+            Some(LOGIN_TIMEOUT),
+            VaultOperation::Login,
+        )?;
         self.whoami()
     }
 
     fn get(&self, secret: &SecretRef) -> Result<SecretValue, VaultError> {
-        validate_name(&secret.vault)?;
-        validate_name(&secret.name)?;
-        let shown = self.run_json(to_args(&[
-            "keyvault",
-            "secret",
-            "show",
-            "--vault-name",
-            &secret.vault,
-            "--name",
-            &secret.name,
-            "-o",
-            "json",
-        ]))?;
-        let value = shown["value"].as_str().ok_or(VaultError::Parse)?;
-        let id = shown["id"].as_str().ok_or(VaultError::Parse)?;
-        let version = version_from_id(id)?;
+        let operation = VaultOperation::SecretGet;
+        validate_name(&secret.vault).map_err(|error| {
+            error.with_diagnostic(VaultDiagnostic::new(
+                operation,
+                VaultFailureReason::InvalidName,
+            ))
+        })?;
+        validate_name(&secret.name).map_err(|error| {
+            error.with_diagnostic(VaultDiagnostic::new(
+                operation,
+                VaultFailureReason::InvalidName,
+            ))
+        })?;
+        let shown = self.run_json(
+            to_args(&[
+                "keyvault",
+                "secret",
+                "show",
+                "--vault-name",
+                &secret.vault,
+                "--name",
+                &secret.name,
+                "-o",
+                "json",
+            ]),
+            operation,
+        )?;
+        let value = shown["value"].as_str().ok_or_else(|| {
+            VaultError::Parse.with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::MissingField)
+                    .with_field("value"),
+            )
+        })?;
+        let id = shown["id"].as_str().ok_or_else(|| {
+            VaultError::Parse.with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::MissingField).with_field("id"),
+            )
+        })?;
+        let version = version_from_id(id).map_err(|_| {
+            VaultError::Parse.with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::InvalidVersion)
+                    .with_field("id"),
+            )
+        })?;
         Ok(SecretValue {
             value: value.to_string(),
             version: version.to_string(),
@@ -398,14 +501,34 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
     }
 
     fn set(&self, secret: &SecretRef, value: &str) -> Result<SecretValue, VaultError> {
-        validate_name(&secret.vault)?;
-        validate_name(&secret.name)?;
-        fs::create_dir_all(&self.staging_dir)?;
-        let staged = StagedFile::create_in(&self.staging_dir, value)?;
-        let file = staged
-            .path()
-            .to_str()
-            .ok_or_else(|| VaultError::Io("the staging path is not valid UTF-8".into()))?;
+        let operation = VaultOperation::SecretSet;
+        validate_name(&secret.vault).map_err(|error| {
+            error.with_diagnostic(VaultDiagnostic::new(
+                operation,
+                VaultFailureReason::InvalidName,
+            ))
+        })?;
+        validate_name(&secret.name).map_err(|error| {
+            error.with_diagnostic(VaultDiagnostic::new(
+                operation,
+                VaultFailureReason::InvalidName,
+            ))
+        })?;
+        fs::create_dir_all(&self.staging_dir).map_err(|_| {
+            VaultError::Io("Unable to prepare the secret for Azure CLI.".into()).with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::IoFailure),
+            )
+        })?;
+        let staged = StagedFile::create_in(&self.staging_dir, value).map_err(|_| {
+            VaultError::Io("Unable to prepare the secret for Azure CLI.".into()).with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::IoFailure),
+            )
+        })?;
+        let file = staged.path().to_str().ok_or_else(|| {
+            VaultError::Io("Unable to prepare the secret for Azure CLI.".into()).with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::IoFailure),
+            )
+        })?;
 
         let mut args = to_args(&[
             "keyvault",
@@ -426,9 +549,18 @@ impl<R: CommandRunner> SecretProvider for AzCliProvider<R> {
         args.extend(to_args(&["-o", "json"]));
 
         // `staged` lives until this function returns, whatever the outcome.
-        let stored = self.run_json(args)?;
-        let id = stored["id"].as_str().ok_or(VaultError::Parse)?;
-        let version = version_from_id(id)?;
+        let stored = self.run_json(args, operation)?;
+        let id = stored["id"].as_str().ok_or_else(|| {
+            VaultError::Parse.with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::MissingField).with_field("id"),
+            )
+        })?;
+        let version = version_from_id(id).map_err(|_| {
+            VaultError::Parse.with_diagnostic(
+                VaultDiagnostic::new(operation, VaultFailureReason::InvalidVersion)
+                    .with_field("id"),
+            )
+        })?;
         Ok(SecretValue {
             // What was set, not what `az` echoes back.
             value: value.to_string(),
@@ -496,28 +628,17 @@ fn map_failure(stderr: &str) -> VaultError {
     } else if mentions(&["secretnotfound", "vaultnotfound", "was not found"]) {
         VaultError::NotFound
     } else {
-        VaultError::Cli(summarise(stderr))
+        VaultError::Cli("The Azure CLI command failed.".to_string())
     }
 }
 
-/// The first `ERROR:` line without its prefix, or the first non-empty line
-/// when there is none, bounded in length.
-fn summarise(stderr: &str) -> String {
-    let first_line = error_lines(stderr).into_iter().next().or_else(|| {
-        stderr
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-    });
-    let first_line = first_line.unwrap_or("");
-    let message = first_line
-        .strip_prefix("ERROR:")
-        .map(str::trim)
-        .unwrap_or(first_line);
-    if message.is_empty() {
-        return "the command failed without any error output".to_string();
+fn failure_reason(error: &VaultError) -> VaultFailureReason {
+    match error.kind() {
+        "not_signed_in" => VaultFailureReason::NotSignedIn,
+        "forbidden" => VaultFailureReason::Forbidden,
+        "not_found" => VaultFailureReason::NotFound,
+        _ => VaultFailureReason::CommandFailed,
     }
-    message.chars().take(MAX_SUMMARY_CHARS).collect()
 }
 
 #[cfg(test)]
@@ -603,6 +724,7 @@ mod tests {
     fn ok(stdout: &str) -> io::Result<CmdOutput> {
         Ok(CmdOutput {
             status_ok: true,
+            status_code: Some(0),
             stdout: stdout.as_bytes().to_vec(),
             stderr: String::new(),
         })
@@ -611,6 +733,7 @@ mod tests {
     fn fail(stderr: &str) -> io::Result<CmdOutput> {
         Ok(CmdOutput {
             status_ok: false,
+            status_code: Some(1),
             stdout: Vec::new(),
             stderr: stderr.to_string(),
         })
@@ -725,7 +848,20 @@ mod tests {
     #[test]
     fn whoami_reports_a_parse_error_when_the_user_is_missing() {
         let p = provider(vec![ok(r#"{"id":"sub-id","name":"Dev"}"#)]);
-        assert_eq!(p.whoami(), Err(VaultError::Parse));
+        let error = p.whoami().unwrap_err();
+        assert_eq!(error, VaultError::Parse);
+        assert_eq!(
+            error.diagnostic().unwrap().operation,
+            VaultOperation::AccountShow
+        );
+        assert_eq!(
+            error.diagnostic().unwrap().reason,
+            VaultFailureReason::MissingField
+        );
+        assert_eq!(
+            error.diagnostic().unwrap().metadata.field,
+            Some("user.name")
+        );
     }
 
     // --- login ---
@@ -780,12 +916,17 @@ mod tests {
         // A failed login must not copy stdout into the error either.
         let failed = Ok(CmdOutput {
             status_ok: false,
+            status_code: Some(1),
             stdout: b"leaky-account-listing".to_vec(),
             stderr: "ERROR: user cancelled".into(),
         });
         let err = provider(vec![failed]).login().unwrap_err();
-        assert_eq!(err, VaultError::Cli("user cancelled".into()));
+        assert_eq!(err, VaultError::Cli("The Azure CLI command failed.".into()));
         assert!(!err.to_string().contains("leaky"));
+        assert!(!serde_json::to_string(&err)
+            .unwrap()
+            .contains("leaky-account-listing"));
+        assert_eq!(err.diagnostic().unwrap().operation, VaultOperation::Login);
     }
 
     #[test]
@@ -799,7 +940,9 @@ mod tests {
         assert_eq!(provider(vec![missing]).login(), Err(VaultError::AzMissing));
 
         let denied = Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
-        assert!(matches!(provider(vec![denied]).login(), Err(VaultError::Io(_))));
+        let error = provider(vec![denied]).login().unwrap_err();
+        assert_eq!(error.kind(), "io");
+        assert_eq!(error.diagnostic().unwrap().operation, VaultOperation::Login);
 
         let p = provider(vec![fail("ERROR: AADSTS50126: Invalid username or password.")]);
         assert_eq!(p.login(), Err(VaultError::NotSignedIn));
@@ -868,9 +1011,34 @@ mod tests {
 
     #[test]
     fn list_reports_a_parse_error_for_non_array_or_invalid_output() {
-        assert_eq!(provider(vec![ok(r#"{"name":"a"}"#)]).list("kv"), Err(VaultError::Parse));
-        assert_eq!(provider(vec![ok("not json")]).list("kv"), Err(VaultError::Parse));
-        assert_eq!(provider(vec![ok(r#"[{"enabled":true}]"#)]).list("kv"), Err(VaultError::Parse));
+        let wrong_shape = provider(vec![ok(r#"{"name":"a"}"#)])
+            .list("kv")
+            .unwrap_err();
+        assert_eq!(wrong_shape, VaultError::Parse);
+        assert_eq!(
+            wrong_shape.diagnostic().unwrap().reason,
+            VaultFailureReason::InvalidShape
+        );
+        assert_eq!(
+            wrong_shape.diagnostic().unwrap().operation,
+            VaultOperation::SecretList
+        );
+
+        let invalid_json = provider(vec![ok("not json")]).list("kv").unwrap_err();
+        assert_eq!(invalid_json, VaultError::Parse);
+        assert_eq!(
+            invalid_json.diagnostic().unwrap().reason,
+            VaultFailureReason::InvalidJson
+        );
+
+        let missing_name = provider(vec![ok(r#"[{"enabled":true}]"#)])
+            .list("kv")
+            .unwrap_err();
+        assert_eq!(missing_name, VaultError::Parse);
+        assert_eq!(
+            missing_name.diagnostic().unwrap().metadata.field,
+            Some("name")
+        );
     }
 
     // --- get ---
@@ -942,16 +1110,42 @@ mod tests {
                 "{id}"
             );
         }
+
+        let error = provider(vec![ok(
+            r#"{"id":"https://vault-sentinel.vault.azure.net/secrets/app-config","value":"x"}"#,
+        )])
+        .get(&secret_ref("vault-sentinel", "app-config"))
+        .unwrap_err();
+        assert_eq!(
+            error.diagnostic().unwrap().reason,
+            VaultFailureReason::InvalidVersion
+        );
+        assert_eq!(error.diagnostic().unwrap().metadata.field, Some("id"));
+        assert!(!serde_json::to_string(&error)
+            .unwrap()
+            .contains("vault-sentinel"));
     }
 
     #[test]
     fn get_reports_a_parse_error_when_value_or_id_is_missing() {
         let no_value = provider(vec![ok(r#"{"id":"https://kv/secrets/n/v1"}"#)]);
-        assert_eq!(no_value.get(&secret_ref("kv", "n")), Err(VaultError::Parse));
+        let no_value_error = no_value.get(&secret_ref("kv", "n")).unwrap_err();
+        assert_eq!(no_value_error, VaultError::Parse);
+        assert_eq!(
+            no_value_error.diagnostic().unwrap().metadata.field,
+            Some("value")
+        );
         let no_id = provider(vec![ok(r#"{"value":"x"}"#)]);
-        assert_eq!(no_id.get(&secret_ref("kv", "n")), Err(VaultError::Parse));
+        let no_id_error = no_id.get(&secret_ref("kv", "n")).unwrap_err();
+        assert_eq!(no_id_error, VaultError::Parse);
+        assert_eq!(no_id_error.diagnostic().unwrap().metadata.field, Some("id"));
         let garbage = provider(vec![ok("<html>")]);
-        assert_eq!(garbage.get(&secret_ref("kv", "n")), Err(VaultError::Parse));
+        let garbage_error = garbage.get(&secret_ref("kv", "n")).unwrap_err();
+        assert_eq!(garbage_error, VaultError::Parse);
+        assert_eq!(
+            garbage_error.diagnostic().unwrap().reason,
+            VaultFailureReason::InvalidJson
+        );
     }
 
     #[test]
@@ -961,6 +1155,24 @@ mod tests {
             .get(&secret_ref("kv", "n"))
             .unwrap_err();
         assert!(!err.to_string().contains("hunter2"));
+    }
+
+    #[test]
+    fn malformed_json_has_a_safe_positioned_diagnostic_for_secret_get() {
+        let sentinel = "hunter2-super-secret";
+        let err = provider(vec![ok(&format!("{{\n  \"value\": \"{sentinel}"))])
+            .get(&secret_ref("vault-sentinel", "secret-sentinel"))
+            .unwrap_err();
+        let serialized = serde_json::to_value(&err).unwrap();
+
+        assert_eq!(serialized["kind"], serde_json::json!("parse"));
+        assert_eq!(serialized["diagnostic"]["operation"], "secret_get");
+        assert_eq!(serialized["diagnostic"]["reason"], "invalid_json");
+        assert!(serialized["diagnostic"]["metadata"]["line"].is_number());
+        assert!(serialized["diagnostic"]["metadata"]["column"].is_number());
+        assert!(!serialized.to_string().contains(sentinel));
+        assert!(!serialized.to_string().contains("vault-sentinel"));
+        assert!(!serialized.to_string().contains("secret-sentinel"));
     }
 
     // --- output encoding ---
@@ -974,11 +1186,26 @@ mod tests {
         stdout.extend_from_slice(br#"ss"}"#);
         let p = provider(vec![Ok(CmdOutput {
             status_ok: true,
+            status_code: Some(0),
             stdout,
             stderr: String::new(),
         })]);
 
-        assert_eq!(p.get(&secret_ref("kv", "n")), Err(VaultError::Parse));
+        let error = p
+            .get(&secret_ref("vault-sentinel", "secret-sentinel"))
+            .unwrap_err();
+        assert_eq!(error, VaultError::Parse);
+        assert_eq!(
+            error.diagnostic().unwrap().operation,
+            VaultOperation::SecretGet
+        );
+        assert_eq!(
+            error.diagnostic().unwrap().reason,
+            VaultFailureReason::InvalidUtf8
+        );
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert!(!serialized.contains("vault-sentinel"));
+        assert!(!serialized.contains("secret-sentinel"));
     }
 
     #[cfg(any(windows, unix))]
@@ -997,11 +1224,31 @@ mod tests {
     #[test]
     fn a_command_that_timed_out_maps_to_the_timeout_error() {
         let timed_out = || Err(io::Error::new(io::ErrorKind::TimedOut, "deadline exceeded"));
-        assert_eq!(provider(vec![timed_out()]).whoami(), Err(VaultError::Timeout));
-        assert_eq!(provider(vec![timed_out()]).list("kv"), Err(VaultError::Timeout));
+        let account_error = provider(vec![timed_out()]).whoami().unwrap_err();
+        assert_eq!(account_error, VaultError::Timeout);
         assert_eq!(
-            provider(vec![timed_out()]).get(&secret_ref("kv", "n")),
-            Err(VaultError::Timeout)
+            account_error.diagnostic().unwrap().operation,
+            VaultOperation::AccountShow
+        );
+        assert_eq!(
+            account_error.diagnostic().unwrap().metadata.timed_out,
+            Some(true)
+        );
+
+        let list_error = provider(vec![timed_out()]).list("kv").unwrap_err();
+        assert_eq!(list_error, VaultError::Timeout);
+        assert_eq!(
+            list_error.diagnostic().unwrap().operation,
+            VaultOperation::SecretList
+        );
+
+        let get_error = provider(vec![timed_out()])
+            .get(&secret_ref("kv", "n"))
+            .unwrap_err();
+        assert_eq!(get_error, VaultError::Timeout);
+        assert_eq!(
+            get_error.diagnostic().unwrap().operation,
+            VaultOperation::SecretGet
         );
     }
 
@@ -1092,84 +1339,71 @@ mod tests {
     }
 
     #[test]
-    fn other_non_zero_exits_become_a_cli_error_with_the_first_stderr_line() {
+    fn non_zero_exits_use_a_fixed_cli_message_and_never_copy_stderr() {
+        let sentinel = "account=acct-sentinel vault=vault-sentinel value=hunter2-super-secret args=--vault-name vault-sentinel --file C:\\secret-sentinel.tmp";
+        let error = provider(vec![fail(&format!("ERROR: {sentinel}"))])
+            .list("vault-sentinel")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Azure CLI error: The Azure CLI command failed."
+        );
+
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert!(!serialized.contains(sentinel));
+        assert!(!serialized.contains("acct-sentinel"));
+        assert!(!serialized.contains("vault-sentinel"));
+        assert!(!serialized.contains("hunter2-super-secret"));
+        assert!(!serialized.contains("secret-sentinel.tmp"));
+        assert_eq!(
+            error.diagnostic().unwrap().operation,
+            VaultOperation::SecretList
+        );
+        assert_eq!(
+            error.diagnostic().unwrap().reason,
+            VaultFailureReason::CommandFailed
+        );
+        assert_eq!(error.diagnostic().unwrap().metadata.exit_status, Some(1));
+    }
+
+    #[test]
+    fn warnings_do_not_change_the_allowlisted_failure_category() {
         let p = provider(vec![fail(
-            "\nERROR: something unexpected happened\nTraceback (most recent call last):\n  ...\n",
+            "WARNING: Please run 'az upgrade' to update the CLI.\nERROR: something unexpected happened\n",
         )]);
-        match p.list("kv") {
-            Err(VaultError::Cli(summary)) => {
-                assert_eq!(summary, "something unexpected happened");
-            }
-            other => panic!("expected a Cli error, got {other:?}"),
-        }
+        let error = p.list("kv").unwrap_err();
+        assert_eq!(error.kind(), "cli");
+        assert_eq!(
+            error.to_string(),
+            "Azure CLI error: The Azure CLI command failed."
+        );
+        assert_eq!(
+            error.diagnostic().unwrap().reason,
+            VaultFailureReason::CommandFailed
+        );
     }
 
     #[test]
-    fn a_leading_warning_line_does_not_replace_the_error_line_in_the_cli_summary() {
+    fn a_warning_does_not_hide_a_safe_forbidden_category() {
         let p = provider(vec![fail(
-            "WARNING: a minor notice
-ERROR: the real failure
-ERROR: a later failure
-",
+            "WARNING: noise\nERROR: (Forbidden) The user does not have secrets get permission.\n",
         )]);
-        match p.list("kv") {
-            Err(VaultError::Cli(summary)) => assert_eq!(summary, "the real failure"),
-            other => panic!("expected a Cli error, got {other:?}"),
-        }
+        let error = p.list("kv").unwrap_err();
+        assert_eq!(error, VaultError::Forbidden);
+        assert_eq!(
+            error.diagnostic().unwrap().reason,
+            VaultFailureReason::Forbidden
+        );
     }
 
     #[test]
-    fn without_any_error_line_the_summary_falls_back_to_the_first_non_empty_line() {
-        let p = provider(vec![fail("
-  WARNING: only a warning here
-second line
-")]);
-        match p.list("kv") {
-            Err(VaultError::Cli(summary)) => assert_eq!(summary, "WARNING: only a warning here"),
-            other => panic!("expected a Cli error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_warning_that_mentions_a_sign_in_hint_does_not_misclassify_a_failure() {
-        let p = provider(vec![fail(
-            "WARNING: Please run 'az upgrade' to update the CLI.
-ERROR: something unexpected happened
-",
-        )]);
-        match p.list("kv") {
-            Err(VaultError::Cli(summary)) => assert_eq!(summary, "something unexpected happened"),
-            other => panic!("expected a Cli error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn an_error_line_after_a_warning_is_still_classified_by_its_own_text() {
-        let p = provider(vec![fail(
-            "WARNING: noise
-ERROR: (Forbidden) The user does not have secrets get permission.
-",
-        )]);
-        assert_eq!(p.list("kv"), Err(VaultError::Forbidden));
-    }
-
-    #[test]
-    fn cli_error_summaries_are_truncated_on_a_character_boundary() {
-        let long = format!("ERROR: {}", "é".repeat(MAX_SUMMARY_CHARS * 2));
-        match provider(vec![fail(&long)]).list("kv") {
-            Err(VaultError::Cli(summary)) => {
-                assert_eq!(summary.chars().count(), MAX_SUMMARY_CHARS);
-            }
-            other => panic!("expected a Cli error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_failure_with_empty_stderr_still_yields_a_readable_cli_error() {
-        match provider(vec![fail("  \n")]).list("kv") {
-            Err(VaultError::Cli(summary)) => assert!(!summary.is_empty()),
-            other => panic!("expected a Cli error, got {other:?}"),
-        }
+    fn an_empty_stderr_still_yields_a_fixed_cli_message() {
+        let error = provider(vec![fail("  \n")]).list("kv").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Azure CLI error: The Azure CLI command failed."
+        );
+        assert!(!error.to_string().is_empty());
     }
 
     #[test]
@@ -1181,7 +1415,16 @@ ERROR: (Forbidden) The user does not have secrets get permission.
     #[test]
     fn other_spawn_failures_map_to_an_io_error() {
         let p = provider(vec![Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))]);
-        assert!(matches!(p.whoami(), Err(VaultError::Io(_))));
+        let error = p.whoami().unwrap_err();
+        assert_eq!(error.kind(), "io");
+        assert_eq!(
+            error.diagnostic().unwrap().operation,
+            VaultOperation::AccountShow
+        );
+        assert_eq!(
+            error.to_string(),
+            "File system error: Azure CLI could not be started."
+        );
     }
 
     // --- set ---
@@ -1387,6 +1630,27 @@ ERROR: (Forbidden) The user does not have secrets get permission.
     }
 
     #[test]
+    fn set_shape_failures_identify_secret_set_without_echoing_the_response() {
+        let sentinel = "vault-sentinel";
+        let (_dir, _staging, p) = staged(vec![ok(&format!(
+            r#"{{"value":"hunter2-super-secret","id":"https://{sentinel}.vault.azure.net/secrets/n"}}"#
+        ))]);
+        let error = p.set(&secret_ref(sentinel, "n"), "value").unwrap_err();
+        assert_eq!(error, VaultError::Parse);
+        assert_eq!(
+            error.diagnostic().unwrap().operation,
+            VaultOperation::SecretSet
+        );
+        assert_eq!(
+            error.diagnostic().unwrap().reason,
+            VaultFailureReason::InvalidVersion
+        );
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert!(!serialized.contains("hunter2-super-secret"));
+        assert!(!serialized.contains(sentinel));
+    }
+
+    #[test]
     fn invalid_names_are_rejected_before_any_file_is_written() {
         let (_dir, staging, p) = staged(vec![]);
         for bad in ["", "a b", "a;b", "--query", "-o", "a/b", "a.b", "$(whoami)", "a\"b"] {
@@ -1412,7 +1676,12 @@ ERROR: (Forbidden) The user does not have secrets get permission.
         std::fs::write(&blocker, "a file, not a folder").unwrap();
         let p = AzCliProvider::new(FakeRunner::new(vec![ok(SET_OUTPUT)]), blocker.join(".tmp"));
 
-        assert!(matches!(p.set(&secret_ref("kv", "n"), "v"), Err(VaultError::Io(_))));
+        let error = p.set(&secret_ref("kv", "n"), "v").unwrap_err();
+        assert_eq!(error.kind(), "io");
+        assert_eq!(
+            error.diagnostic().unwrap().operation,
+            VaultOperation::SecretSet
+        );
         assert!(p.runner.calls().is_empty());
     }
 

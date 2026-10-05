@@ -51,9 +51,98 @@ pub struct Identity {
     pub subscription: String,
 }
 
+/// The Azure operation that produced a diagnostic. Resource identifiers are
+/// intentionally not part of this value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultOperation {
+    AccountShow,
+    SecretList,
+    SecretGet,
+    SecretSet,
+    Login,
+}
+
+/// Stable, allowlisted diagnostic reason. Diagnostic text must never be
+/// derived from CLI output, arguments, values or resource identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultFailureReason {
+    NotSignedIn,
+    Forbidden,
+    NotFound,
+    AzMissing,
+    CommandFailed,
+    Timeout,
+    IoFailure,
+    InvalidUtf8,
+    InvalidJson,
+    InvalidShape,
+    MissingField,
+    InvalidVersion,
+    InvalidName,
+}
+
+/// Optional metadata that is safe to show in a copied diagnostic report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct VaultDiagnosticMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_status: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timed_out: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+    /// An allowlisted response field name, never its value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<&'static str>,
+}
+
+/// Secret-safe details for a vault failure. This is deliberately a small
+/// schema: it can be copied into an issue without carrying command output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VaultDiagnostic {
+    pub operation: VaultOperation,
+    pub reason: VaultFailureReason,
+    pub metadata: VaultDiagnosticMetadata,
+}
+
+impl VaultDiagnostic {
+    pub(crate) fn new(operation: VaultOperation, reason: VaultFailureReason) -> Self {
+        VaultDiagnostic {
+            operation,
+            reason,
+            metadata: VaultDiagnosticMetadata::default(),
+        }
+    }
+
+    pub(crate) fn with_exit_status(mut self, status: Option<i32>) -> Self {
+        self.metadata.exit_status = status;
+        self
+    }
+
+    pub(crate) fn with_timeout(mut self) -> Self {
+        self.metadata.timed_out = Some(true);
+        self
+    }
+
+    pub(crate) fn with_position(mut self, line: usize, column: usize) -> Self {
+        self.metadata.line = Some(line);
+        self.metadata.column = Some(column);
+        self
+    }
+
+    pub(crate) fn with_field(mut self, field: &'static str) -> Self {
+        self.metadata.field = Some(field);
+        self
+    }
+}
+
 /// Every way a vault operation can fail. Serialised to the frontend as
-/// `{ "kind": "<snake_case>", "message": "<user-facing text>" }`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `{ "kind": "<snake_case>", "message": "<user-facing text>" }`, with
+/// an optional secret-safe `diagnostic` object for Azure CLI failures.
+#[derive(Debug, Clone)]
 pub enum VaultError {
     NotSignedIn,
     Forbidden,
@@ -81,12 +170,43 @@ pub enum VaultError {
     Io(String),
     Cli(String),
     Internal(String),
+    /// An existing error plus safe Azure operation details. The wrapper keeps
+    /// the established `kind` and `message` fields unchanged for callers.
+    Diagnostic {
+        source: Box<VaultError>,
+        diagnostic: VaultDiagnostic,
+    },
 }
 
 impl VaultError {
+    pub(crate) fn with_diagnostic(self, diagnostic: VaultDiagnostic) -> Self {
+        match self {
+            VaultError::Diagnostic { source, .. } => VaultError::Diagnostic { source, diagnostic },
+            source => VaultError::Diagnostic {
+                source: Box::new(source),
+                diagnostic,
+            },
+        }
+    }
+
+    pub fn diagnostic(&self) -> Option<&VaultDiagnostic> {
+        match self {
+            VaultError::Diagnostic { diagnostic, .. } => Some(diagnostic),
+            _ => None,
+        }
+    }
+
+    fn without_diagnostic(&self) -> &VaultError {
+        let mut error = self;
+        while let VaultError::Diagnostic { source, .. } = error {
+            error = source;
+        }
+        error
+    }
+
     /// Stable machine-readable discriminator for the frontend.
     pub fn kind(&self) -> &'static str {
-        match self {
+        match self.without_diagnostic() {
             VaultError::NotSignedIn => "not_signed_in",
             VaultError::Forbidden => "forbidden",
             VaultError::NotFound => "not_found",
@@ -103,13 +223,49 @@ impl VaultError {
             VaultError::Io(_) => "io",
             VaultError::Cli(_) => "cli",
             VaultError::Internal(_) => "internal",
+            VaultError::Diagnostic { source, .. } => source.kind(),
         }
     }
 }
 
+impl PartialEq for VaultError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.without_diagnostic(), other.without_diagnostic()) {
+            (VaultError::NotSignedIn, VaultError::NotSignedIn)
+            | (VaultError::Forbidden, VaultError::Forbidden)
+            | (VaultError::NotFound, VaultError::NotFound)
+            | (VaultError::AzMissing, VaultError::AzMissing)
+            | (VaultError::InvalidName, VaultError::InvalidName)
+            | (VaultError::Parse, VaultError::Parse)
+            | (VaultError::Timeout, VaultError::Timeout)
+            | (VaultError::NotPulled, VaultError::NotPulled)
+            | (VaultError::NoChanges, VaultError::NoChanges)
+            | (VaultError::PreviewRequired, VaultError::PreviewRequired)
+            | (VaultError::Conflict, VaultError::Conflict) => true,
+            (
+                VaultError::InvalidJson {
+                    line: a_line,
+                    column: a_column,
+                },
+                VaultError::InvalidJson {
+                    line: b_line,
+                    column: b_column,
+                },
+            ) => a_line == b_line && a_column == b_column,
+            (VaultError::DuplicateKeys(a), VaultError::DuplicateKeys(b)) => a == b,
+            (VaultError::Io(a), VaultError::Io(b))
+            | (VaultError::Cli(a), VaultError::Cli(b))
+            | (VaultError::Internal(a), VaultError::Internal(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for VaultError {}
+
 impl fmt::Display for VaultError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+        match self.without_diagnostic() {
             VaultError::NotSignedIn => {
                 f.write_str("Not signed in to Azure. Run `az login` and retry.")
             }
@@ -156,6 +312,7 @@ impl fmt::Display for VaultError {
             VaultError::Io(detail) => write!(f, "File system error: {detail}"),
             VaultError::Cli(detail) => write!(f, "Azure CLI error: {detail}"),
             VaultError::Internal(detail) => write!(f, "Internal error: {detail}"),
+            VaultError::Diagnostic { source, .. } => source.fmt(f),
         }
     }
 }
@@ -170,9 +327,14 @@ impl From<std::io::Error> for VaultError {
 
 impl Serialize for VaultError {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("VaultError", 2)?;
-        state.serialize_field("kind", self.kind())?;
-        state.serialize_field("message", &self.to_string())?;
+        let field_count = if self.diagnostic().is_some() { 3 } else { 2 };
+        let mut state = serializer.serialize_struct("VaultError", field_count)?;
+        let source = self.without_diagnostic();
+        state.serialize_field("kind", source.kind())?;
+        state.serialize_field("message", &source.to_string())?;
+        if let Some(diagnostic) = self.diagnostic() {
+            state.serialize_field("diagnostic", diagnostic)?;
+        }
         state.end()
     }
 }
@@ -286,6 +448,37 @@ mod tests {
         assert_eq!(value["kind"], json!("not_signed_in"));
         assert_eq!(value["message"], json!(VaultError::NotSignedIn.to_string()));
         assert_eq!(value.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn vault_error_serialises_a_secret_safe_diagnostic_without_changing_kind_or_message() {
+        let error = VaultError::Parse.with_diagnostic(
+            VaultDiagnostic::new(VaultOperation::SecretGet, VaultFailureReason::InvalidJson)
+                .with_position(3, 7),
+        );
+        let value = serde_json::to_value(error).unwrap();
+
+        assert_eq!(value["kind"], json!("parse"));
+        assert_eq!(
+            value["message"],
+            json!("Could not understand the response from the Azure CLI.")
+        );
+        assert_eq!(
+            value["diagnostic"],
+            json!({
+                "operation": "secret_get",
+                "reason": "invalid_json",
+                "metadata": { "line": 3, "column": 7 }
+            })
+        );
+        assert!(!value.to_string().contains("hunter2-super-secret"));
+    }
+
+    #[test]
+    fn vault_error_without_diagnostic_keeps_the_legacy_two_field_shape() {
+        let value = serde_json::to_value(VaultError::NotSignedIn).unwrap();
+        assert_eq!(value.as_object().unwrap().len(), 2);
+        assert!(!value.as_object().unwrap().contains_key("diagnostic"));
     }
 
     #[test]

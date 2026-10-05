@@ -4,6 +4,9 @@ import {
   rememberVault,
   parseRecentVaults,
   errorMessage,
+  normalizeDiagnostic,
+  diagnosticReport,
+  diagnosticToast,
   needsPullConfirmation,
   INITIAL_SESSION,
   reduceSession,
@@ -16,6 +19,7 @@ import {
 import { el, button } from './dom.js';
 import { openPushDialog } from './vaultPushDialog.js';
 import { pushSuccessMessage } from './vaultPush.js';
+import { readBuildInfo } from './buildTag.js';
 
 const RECENT_STORAGE_KEY = 'json-scout.vault.recent';
 const INVALID_NAME_MESSAGE =
@@ -92,7 +96,9 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     confirmName: null,
     recent: readRecentVaults(),
     message: null, // { text, kind: 'error' | 'info' }
+    lastDiagnostic: null, // { diagnostic, report, copyState }
   };
+  const appVersion = readBuildInfo()?.version;
 
   // --- Static structure -----------------------------------------------------
   const authEl = el('div', 'vault-auth');
@@ -122,6 +128,33 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   const messageEl = el('div', 'vault-message');
   messageEl.setAttribute('role', 'status');
   messageEl.setAttribute('aria-live', 'polite');
+
+  const diagnosticEl = el('section', 'vault-diagnostic');
+  diagnosticEl.setAttribute('aria-labelledby', 'vault-diagnostic-title');
+  diagnosticEl.hidden = true;
+  const diagnosticTitle = el('h3', 'vault-diagnostic__title', 'Last diagnostic');
+  diagnosticTitle.id = 'vault-diagnostic-title';
+  const diagnosticSummary = el('p', 'vault-diagnostic__summary');
+  const diagnosticTools = el('div', 'vault-diagnostic__tools');
+  const diagnosticCopy = button('Copy report', 'vault-btn vault-diagnostic__copy', () => {
+    copyDiagnosticReport();
+  });
+  const diagnosticStatus = el('p', 'vault-diagnostic__status');
+  diagnosticStatus.setAttribute('role', 'status');
+  diagnosticStatus.setAttribute('aria-live', 'polite');
+  const diagnosticDetails = document.createElement('details');
+  diagnosticDetails.className = 'vault-diagnostic__details';
+  const diagnosticDetailsSummary = el('summary', undefined, 'View full report');
+  const diagnosticReportEl = el('textarea', 'vault-diagnostic__report');
+  diagnosticReportEl.setAttribute('aria-label', 'Diagnostic report');
+  diagnosticReportEl.readOnly = true;
+  diagnosticReportEl.rows = 7;
+  diagnosticReportEl.spellcheck = false;
+  diagnosticReportEl.hidden = true;
+  diagnosticDetails.append(diagnosticDetailsSummary, diagnosticReportEl);
+  diagnosticTools.append(diagnosticCopy, diagnosticStatus);
+  diagnosticEl.append(diagnosticTitle, diagnosticSummary, diagnosticTools, diagnosticDetails);
+
   const identityEl = el('div', 'vault-identity');
   const searchInput = el('input', 'vault-input vault-search');
   searchInput.type = 'search';
@@ -135,7 +168,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   listEl.setAttribute('aria-label', 'Secrets');
   const listSection = el('div', 'vault-results');
   listSection.append(identityEl, searchInput, summaryEl, listEl);
-  root.append(authEl, form, chips, messageEl, listSection);
+  root.append(authEl, form, chips, messageEl, diagnosticEl, listSection);
 
   const isReady = () => panelStage(state.session) === 'ready';
 
@@ -179,6 +212,30 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     messageEl.textContent = state.message?.text ?? '';
     messageEl.className = `vault-message${state.message ? ` vault-message--${state.message.kind}` : ''}`;
     messageEl.hidden = !state.message;
+  }
+
+  function renderDiagnostic() {
+    const entry = state.lastDiagnostic;
+    diagnosticEl.hidden = !entry;
+    if (!entry) {
+      diagnosticSummary.textContent = '';
+      diagnosticStatus.textContent = '';
+      diagnosticReportEl.value = '';
+      diagnosticReportEl.hidden = true;
+      diagnosticDetails.open = false;
+      return;
+    }
+    diagnosticSummary.textContent = diagnosticToast(entry.diagnostic) ?? 'Diagnostic report available.';
+    diagnosticReportEl.value = entry.report;
+    diagnosticReportEl.hidden = false;
+    if (entry.copyState === 'copied') {
+      diagnosticStatus.textContent = 'Report copied.';
+    } else if (entry.copyState === 'fallback') {
+      diagnosticStatus.textContent = 'Clipboard unavailable. Select and copy the report below.';
+      diagnosticDetails.open = true;
+    } else {
+      diagnosticStatus.textContent = '';
+    }
   }
 
   function renderIdentity() {
@@ -287,6 +344,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     form.hidden = !isReady();
     renderBusy();
     renderMessage();
+    renderDiagnostic();
     renderList();
   }
 
@@ -295,10 +353,37 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     state.message = text ? { text, kind } : null;
   }
 
+  function rememberDiagnostic(err) {
+    const diagnostic = normalizeDiagnostic(err);
+    if (!diagnostic) return false;
+    const report = diagnosticReport(diagnostic, appVersion);
+    if (!report) return false;
+    state.lastDiagnostic = { diagnostic, report, copyState: 'idle' };
+    diagnosticDetails.open = false;
+    return true;
+  }
+
+  async function copyDiagnosticReport() {
+    const entry = state.lastDiagnostic;
+    if (!entry) return;
+    try {
+      const clipboard = globalThis.navigator?.clipboard;
+      if (!clipboard || typeof clipboard.writeText !== 'function') throw new Error('clipboard unavailable');
+      await clipboard.writeText(entry.report);
+      entry.copyState = 'copied';
+    } catch {
+      // The report remains in memory and becomes a selectable textarea. The
+      // clipboard error itself is deliberately not shown or retained.
+      entry.copyState = 'fallback';
+    }
+    renderDiagnostic();
+  }
+
   function reportError(err) {
+    const hasDiagnostic = rememberDiagnostic(err);
     const text = errorMessage(err);
     setMessage(text, 'error');
-    notify?.(text, 'error');
+    notify?.(hasDiagnostic ? diagnosticToast(err) : text, 'error');
   }
 
   /**
@@ -306,6 +391,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
    * back to the sign-in view; anything else is reported as before.
    */
   function handleCallError(err) {
+    const hasDiagnostic = rememberDiagnostic(err);
     if (isSignedOutError(err)) {
       state.session = reduceSession(state.session, { type: 'expired' });
       state.vault = null;
@@ -313,7 +399,13 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       state.itemsGen += 1;
       state.confirmName = null;
       setMessage(SESSION_EXPIRED_MESSAGE, 'error');
-      notify?.(SESSION_EXPIRED_MESSAGE, 'error');
+      notify?.(hasDiagnostic ? diagnosticToast(err) : SESSION_EXPIRED_MESSAGE, 'error');
+      return;
+    }
+    if (hasDiagnostic) {
+      const text = errorMessage(err);
+      setMessage(text, 'error');
+      notify?.(diagnosticToast(err), 'error');
       return;
     }
     reportError(err);
@@ -337,7 +429,9 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       state.session = reduceSession(state.session, { type: 'checked', identity });
     } catch (err) {
       if (token !== state.checkToken) return;
+      const hasDiagnostic = rememberDiagnostic(err);
       state.session = reduceSession(state.session, { type: 'check-failed', error: err });
+      if (hasDiagnostic) notify?.(diagnosticToast(err), 'error');
     }
     render();
   }
@@ -357,11 +451,12 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
       const identity = await invoke('vault_login');
       state.session = reduceSession(state.session, { type: 'signed-in', identity });
     } catch (err) {
+      const hasDiagnostic = rememberDiagnostic(err);
       state.session = reduceSession(state.session, { type: 'sign-in-failed', error: err });
       if (state.active) {
-        const text = loginErrorMessage(err);
+        const text = hasDiagnostic ? errorMessage(err) : loginErrorMessage(err);
         setMessage(text, 'error');
-        notify?.(text, 'error');
+        notify?.(hasDiagnostic ? diagnosticToast(err) : text, 'error');
       }
     }
     // Disabling the button dropped focus; hand it to the next useful control.

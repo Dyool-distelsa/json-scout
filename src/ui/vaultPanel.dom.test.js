@@ -5,6 +5,15 @@ import { createFakeInvoke, settle } from './testing/fakeBackend.js';
 
 const IDENTITY = { user: 'ana@example.com', subscription: 'Dev' };
 const PULL_RESULT = { path: 'C:\\ws\\kv\\cfg.json', baseVersion: 'v1', format: 'json' };
+const DIAGNOSTIC = (operation, reason = 'forbidden') => ({
+  kind: reason === 'not_signed_in' ? 'not_signed_in' : 'parse',
+  message: 'secret-value sentinel and C:\\private\\vault.json',
+  diagnostic: {
+    operation,
+    reason,
+    metadata: { exit_status: 1, field: 'name', ignored: 'secret-value sentinel' },
+  },
+});
 const item = (name, localState = 'remote') => ({ name, enabled: true, localState });
 
 let container;
@@ -16,6 +25,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  try {
+    delete navigator.clipboard;
+  } catch {
+    // The test environment may expose a non-configurable clipboard.
+  }
   container.remove();
   document.body.replaceChildren();
 });
@@ -175,6 +189,96 @@ describe('vault panel: busy guards', () => {
     expect(ctx.fake.callsOf('vault_list')).toHaveLength(1);
     pending.resolve([item('cfg')]);
     await settle();
+  });
+});
+
+describe('vault panel: diagnostics', () => {
+  it('keeps a safe report in the panel after the error toast is gone', async () => {
+    const ctx = setup();
+    ctx.fake.on('vault_list', () => {
+      throw DIAGNOSTIC('secret_list');
+    });
+
+    await openVault(ctx);
+
+    const report = container.querySelector('.vault-diagnostic');
+    expect(report).not.toBeNull();
+    expect(report.hidden).toBe(false);
+    expect(report.textContent).toContain('Secret list');
+    expect(report.textContent).toContain('Access denied');
+    expect(report.textContent).not.toContain('secret-value sentinel');
+    expect(report.textContent).not.toContain('private');
+    expect(ctx.notify).toHaveBeenCalledWith('Secret list failed: Access denied.', 'error');
+
+    ctx.notify.mockClear();
+    await settle();
+    expect(container.querySelector('.vault-diagnostic')).not.toBeNull();
+    expect(ctx.notify).not.toHaveBeenCalled();
+  });
+
+  it('retains diagnostics from status and login failures', async () => {
+    const ctx = setup();
+    ctx.fake.on('vault_status', () => {
+      throw DIAGNOSTIC('account_show', 'not_signed_in');
+    });
+    ctx.fake.on('vault_login', () => {
+      throw DIAGNOSTIC('login', 'timeout');
+    });
+
+    ctx.panel.activate();
+    await settle();
+    expect(container.querySelector('.vault-diagnostic').textContent).toContain('Account status');
+
+    container.querySelector('.vault-auth__action').click();
+    await settle();
+    expect(ctx.fake.callsOf('vault_login')).toHaveLength(1);
+    expect(container.querySelector('.vault-diagnostic').textContent).toContain('Sign-in');
+    expect(ctx.notify).toHaveBeenCalledWith('Sign-in failed: Timed out.', 'error');
+  });
+
+  it('records a pull diagnostic without exposing the backend message', async () => {
+    const ctx = setup({ items: [item('cfg', 'remote')] });
+    ctx.fake.on('vault_pull', () => {
+      throw DIAGNOSTIC('secret_get', 'not_found');
+    });
+
+    await openVault(ctx);
+    pullButton('cfg').click();
+    await settle();
+
+    expect(container.querySelector('.vault-diagnostic').textContent).toContain('Secret pull');
+    expect(container.querySelector('.vault-diagnostic').textContent).toContain('Not found');
+    expect(container.textContent).not.toContain('secret-value sentinel');
+  });
+
+  it('copies a report and uses the selectable fallback when clipboard access fails', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const ctx = setup();
+    ctx.fake.on('vault_list', () => {
+      throw DIAGNOSTIC('secret_list');
+    });
+    await openVault(ctx);
+
+    const copy = container.querySelector('.vault-diagnostic__copy');
+    copy.click();
+    await settle();
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Operation: secret_list'));
+    expect(container.querySelector('.vault-diagnostic__status').textContent).toContain('copied');
+    expect(container.querySelector('.vault-diagnostic__details').open).toBe(false);
+    expect(container.querySelector('.vault-diagnostic__report').hidden).toBe(false);
+
+    writeText.mockRejectedValueOnce(new Error('clipboard denied: secret-value sentinel'));
+    copy.click();
+    await settle();
+    const fallback = container.querySelector('.vault-diagnostic__report');
+    expect(fallback.hidden).toBe(false);
+    expect(fallback.value).toContain('Reason: forbidden');
+    expect(fallback.value).not.toContain('secret-value sentinel');
+    expect(container.querySelector('.vault-diagnostic__status').textContent).toMatch(/select/i);
   });
 });
 

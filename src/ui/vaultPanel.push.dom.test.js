@@ -159,6 +159,30 @@ describe('vault panel: the Push action', () => {
     expect(rowButton('Push', 'cfg').disabled).toBe(false);
   });
 
+  it('stores a safe diagnostic when the panel-owned preview fails', async () => {
+    const ctx = setup();
+    ctx.fake.on('vault_push_preview', () => {
+      throw {
+        kind: 'parse',
+        message: 'secret-value sentinel',
+        diagnostic: {
+          operation: 'secret_get',
+          reason: 'invalid_json',
+          metadata: { line: 4, column: 2, field: 'value' },
+        },
+      };
+    });
+    await openVault(ctx);
+
+    rowButton('Push', 'cfg').click();
+    await settle();
+
+    expect(container.querySelector('.vault-diagnostic').textContent).toContain('Secret pull');
+    expect(container.querySelector('.vault-diagnostic').textContent).toContain('Invalid JSON');
+    expect(container.textContent).not.toContain('secret-value sentinel');
+    expect(ctx.notify).toHaveBeenCalledWith('Secret pull failed: Invalid JSON.', 'error');
+  });
+
   it('sends the panel back to sign-in when the session ended during the preview', async () => {
     const ctx = setup();
     ctx.fake.on('vault_push_preview', () => {

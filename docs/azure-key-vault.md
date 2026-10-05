@@ -179,6 +179,16 @@ The same **Review again** button appears if the preview is older than 5 minutes 
 
 Closing the window discards the local working copies (see below). If any pulled secret has unpushed edits, the app asks first with the title **Unpushed edits**: "N secrets have unpushed edits. Close and discard them?", listing `vault/name` entries. Choose **Keep editing** to stay, or **Discard and close** to leave. This question appears even when the plugin is switched off, because the files exist either way.
 
+## Diagnostics and issue reports
+
+When status, sign-in, list, pull, or a panel-owned push check fails, the toast names the operation and safe reason. The Vault panel also keeps the **Last diagnostic** section after the toast expires.
+
+1. Open **View full report** in **Last diagnostic**.
+2. Choose **Copy report**.
+3. If clipboard access is unavailable, select the report in the expanded text box and copy it manually.
+
+The report is retained in memory for the current app session only. It is not written to disk, added to the vault working folder, or published to GitHub. It contains only the operation, classified reason, safe parser metadata (when present), and the app version when available. It does not include vault or secret names, paths, secret values, credentials, or Azure CLI output.
+
 ## Where the files live
 
 Pulled secrets are stored in the application data folder. On Windows:
@@ -240,7 +250,7 @@ The text in the first column is what the app shows. Some messages come from the 
 | The working copy is not valid JSON (line N, column M). Fix it and try again. | The saved JSON has a syntax error at that position. | Fix it in the editor (the lint gutter helps), save, and push again. |
 | The JSON repeats a key in the same object (at line N...). Remove or rename the duplicates, then preview again. | An object has the same key twice. JSON allows it, but the pushed value would be ambiguous. | Remove or rename the duplicate keys, save, and push again. |
 | This secret has no local working copy. Pull it before pushing. | The working copy was deleted or the pull never finished. | Pull the secret again. |
-| Azure CLI error: ... | The CLI failed for a reason the app does not classify. The text is the first error line from `az`. | Run the matching `az keyvault secret ...` command in a terminal to see the full message. |
+| `<operation> failed: Azure command failed.` | The Azure CLI command failed and the backend could not classify the cause into a more specific safe reason. | Use the **Last diagnostic** report in the Vault panel. If needed, run the matching command in a terminal yourself; JSON Scout does not copy the CLI output into the report. |
 | Could not understand the response from the Azure CLI. | `az` returned unexpected output. | Update the Azure CLI and retry. |
 | File system error: ... | The app could not read or write its working folder. | Check disk space and permissions on the folder in [Where the files live](#where-the-files-live). If the message says the secret was pushed but the local copy could not be updated, pull it again before editing. |
 

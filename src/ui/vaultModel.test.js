@@ -15,6 +15,10 @@ import {
   loginErrorMessage,
   isSignedOutError,
   SESSION_EXPIRED_MESSAGE,
+  normalizeDiagnostic,
+  diagnosticToast,
+  diagnosticReport,
+  diagnosticMessage,
 } from './vaultModel.js';
 
 const item = (name, localState = 'remote', enabled = true) => ({ name, enabled, localState });
@@ -247,6 +251,87 @@ describe('errorMessage', () => {
     for (const bad of [null, undefined, 42, {}, { kind: 'cli' }, { kind: 'cli', message: '' }, '']) {
       expect(errorMessage(bad)).toBe('Vault request failed.');
     }
+  });
+});
+
+describe('vault diagnostics', () => {
+  const error = {
+    kind: 'parse',
+    message: 'do not copy this secret-value sentinel',
+    diagnostic: {
+      operation: 'secret_list',
+      reason: 'forbidden',
+      metadata: {
+        exit_status: 1,
+        timed_out: false,
+        line: 3,
+        column: 7,
+        field: 'name',
+        ignored: 'secret-value sentinel',
+      },
+    },
+  };
+
+  it('keeps only the allowlisted diagnostic schema and metadata fields', () => {
+    expect(normalizeDiagnostic(error)).toEqual({
+      operation: 'secret_list',
+      reason: 'forbidden',
+      metadata: {
+        exit_status: 1,
+        timed_out: false,
+        line: 3,
+        column: 7,
+        field: 'name',
+      },
+    });
+  });
+
+  it('rejects absent, malformed and unrecognized diagnostic payloads', () => {
+    expect(normalizeDiagnostic({ kind: 'cli', message: 'legacy' })).toBeNull();
+    expect(normalizeDiagnostic({ diagnostic: null })).toBeNull();
+    expect(normalizeDiagnostic({ diagnostic: { operation: 'secret_list' } })).toBeNull();
+    expect(
+      normalizeDiagnostic({
+        diagnostic: {
+          operation: '<img src=x onerror=alert(1)>',
+          reason: 'forbidden',
+          metadata: { field: 'value', line: '3' },
+        },
+      })
+    ).toBeNull();
+  });
+
+  it('formats operation and reason as fixed human-readable toast text', () => {
+    expect(diagnosticMessage(error)).toBe('Secret list failed: Access denied.');
+    expect(diagnosticToast(error)).toBe('Secret list failed: Access denied.');
+  });
+
+  it('builds a bounded report from safe fields without copying message or unknown values', () => {
+    const report = diagnosticReport(normalizeDiagnostic(error), '0.2.2');
+    expect(report).toContain('App version: 0.2.2');
+    expect(report).toContain('Operation: secret_list');
+    expect(report).toContain('Reason: forbidden');
+    expect(report).toContain('field: name');
+    expect(report).not.toContain('secret-value sentinel');
+    expect(report).not.toContain('ignored');
+  });
+
+  it('uses actual newlines in reports and never emits literal backslash-n separators', () => {
+    const report = diagnosticReport(normalizeDiagnostic(error), '0.2.2');
+
+    expect(report).toContain('JSON Scout vault diagnostic\nApp version: 0.2.2');
+    expect(report).toContain('Operation: secret_list\nReason: forbidden');
+    expect(report).not.toContain(String.raw`\n`);
+  });
+
+  it('does not fall through to hostile legacy text when a diagnostic payload is malformed', () => {
+    expect(
+      errorMessage({
+        kind: 'cli',
+        message: 'secret-value sentinel',
+        diagnostic: { operation: 'secret_list', reason: 'not-a-reason' },
+      })
+    ).toBe('Vault request failed.');
   });
 });
 

@@ -30,7 +30,32 @@ It does not:
 | Azure account | An account that is allowed to read (and, to push, write) secrets in the vault. See [Azure permissions](#azure-permissions). |
 | Network | Every list, pull and push talks to Azure through the CLI, so you need to be online. |
 
-How the app finds the CLI: it starts `az.cmd` on Windows and `az` on every other system, exactly as a terminal would resolve them through `PATH`. If you installed the CLI while JSON Scout was running, restart the app.
+How the app finds the CLI: on non-Windows systems it starts `az` through `PATH`. On Windows it first looks for a validated Azure CLI ZIP runtime so redirected JSON stays UTF-8; otherwise it keeps the existing `az.cmd` `PATH` fallback. If you installed the CLI while JSON Scout was running, restart the app.
+
+### Windows ZIP runtime and UTF-8 output
+
+The Windows Azure CLI ZIP is supported from any extraction folder. When its layout can be paired safely, JSON Scout invokes the bundled interpreter directly with:
+
+```text
+python.exe -X utf8 -I -B -m azure.cli <the original az arguments>
+```
+
+The original CLI arguments remain separate process arguments; values are not joined into a shell command. The child also receives `AZ_INSTALLER=ZIP`. Before using this path, the app validates all of these files under one ZIP root:
+
+```text
+<root>/bin/az.cmd
+<root>/python.exe
+<root>/Lib/site-packages/azure/cli/__main__.pyc   (or __main__.py)
+```
+
+Resolution is deliberately narrow and does not read or execute wrapper scripts:
+
+1. `AZURE_CLI_PATH` or `AzureCLIPath`, when it names a ZIP `bin` directory, wins after layout validation.
+2. Otherwise, the first `PATH` directory containing `az.cmd` is paired only if its parent has the complete ZIP layout.
+3. If that `az.cmd` is the known Scoop `shims` entry, the app checks Scoop's `apps/azure-cli/current` layout using `SCOOP`, `SCOOP_GLOBAL`, or `%USERPROFILE%\scoop` conventions.
+4. If no complete pairing is established, the app falls back to the normal `az.cmd` launch.
+
+These checks pair files; they are not authenticity or signature verification. A fallback launch still decodes stdout strictly as UTF-8 and is **not** a guarantee that an unsupported installation's encoding issue is repaired. A failed direct invocation is reported once; the app does not silently retry a secret operation through another CLI installation.
 
 Check the CLI from a terminal:
 

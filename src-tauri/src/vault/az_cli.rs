@@ -17,6 +17,9 @@ use super::domain::{
 };
 use super::json_text;
 use serde_json::Value;
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -33,13 +36,147 @@ pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// How often a running child is checked against its deadline.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Program to spawn: Windows ships the Azure CLI as a `.cmd` shim.
+/// Program to spawn when no validated Windows ZIP runtime is available.
 pub fn az_program() -> &'static str {
     if cfg!(windows) {
         "az.cmd"
     } else {
         "az"
     }
+}
+
+/// A validated Azure CLI ZIP installation. Layout validation pairs the files
+/// under one root; it is not an authenticity or signature check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ZipRuntime {
+    root: PathBuf,
+    bin: PathBuf,
+    python: PathBuf,
+}
+
+/// The exact process boundary used for one Azure CLI call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AzInvocation {
+    program: PathBuf,
+    args: Vec<String>,
+    installer: Option<&'static str>,
+}
+
+/// Validate the Windows ZIP layout starting at its `bin` directory.
+fn validated_zip_runtime_from_bin(bin: &Path) -> Option<ZipRuntime> {
+    let root = bin.parent()?;
+    let runtime = ZipRuntime {
+        root: root.to_path_buf(),
+        bin: bin.to_path_buf(),
+        python: root.join("python.exe"),
+    };
+    let module_dir = root.join("Lib").join("site-packages").join("azure").join("cli");
+    let has_module = ["__main__.pyc", "__main__.py"]
+        .iter()
+        .any(|name| module_dir.join(name).is_file());
+    (runtime.bin.join("az.cmd").is_file()
+        && runtime.python.is_file()
+        && has_module)
+    .then_some(runtime)
+}
+
+/// Resolve only known, paired ZIP layouts without reading or executing a shim.
+/// Explicit bin hints win, then the first `az.cmd` selected by PATH. A Scoop
+/// `current` install is considered only when that selected wrapper is in the
+/// corresponding known Scoop `shims` directory.
+fn resolve_zip_runtime_from(
+    explicit_bin_hints: &[PathBuf],
+    path_entries: &[PathBuf],
+    scoop_roots: &[PathBuf],
+) -> Option<ZipRuntime> {
+    for bin in explicit_bin_hints {
+        if let Some(runtime) = validated_zip_runtime_from_bin(bin) {
+            return Some(runtime);
+        }
+    }
+
+    let selected_path_bin = path_entries
+        .iter()
+        .find(|entry| entry.join("az.cmd").is_file());
+    if let Some(bin) = selected_path_bin {
+        if let Some(runtime) = validated_zip_runtime_from_bin(bin) {
+            return Some(runtime);
+        }
+        for scoop_root in scoop_roots {
+            let shims = scoop_root.join("shims");
+            if same_path(bin, &shims) {
+                let current_bin = scoop_root
+                    .join("apps")
+                    .join("azure-cli")
+                    .join("current")
+                    .join("bin");
+                if let Some(runtime) = validated_zip_runtime_from_bin(&current_bin) {
+                    return Some(runtime);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+#[cfg(windows)]
+fn resolve_zip_runtime() -> Option<ZipRuntime> {
+    let explicit_bin_hints = ["AZURE_CLI_PATH", "AzureCLIPath"]
+        .iter()
+        .filter_map(env::var_os)
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let path_entries = env::var_os("PATH")
+        .map(|path| env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    let mut scoop_roots = Vec::new();
+    for variable in ["SCOOP", "SCOOP_GLOBAL"] {
+        if let Some(root) = env::var_os(variable) {
+            scoop_roots.push(PathBuf::from(root));
+        }
+    }
+    if let Some(profile) = env::var_os("USERPROFILE") {
+        scoop_roots.push(PathBuf::from(profile).join("scoop"));
+    }
+
+    resolve_zip_runtime_from(&explicit_bin_hints, &path_entries, &scoop_roots)
+}
+
+#[cfg(not(windows))]
+fn resolve_zip_runtime() -> Option<ZipRuntime> {
+    None
+}
+
+fn az_invocation_for_runtime(runtime: Option<&ZipRuntime>, args: &[String]) -> AzInvocation {
+    if let Some(runtime) = runtime {
+        let mut direct_args = ["-X", "utf8", "-I", "-B", "-m", "azure.cli"]
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect::<Vec<_>>();
+        direct_args.extend(args.iter().cloned());
+        return AzInvocation {
+            program: runtime.python.clone(),
+            args: direct_args,
+            installer: Some("ZIP"),
+        };
+    }
+    AzInvocation {
+        program: PathBuf::from(az_program()),
+        args: args.to_vec(),
+        installer: None,
+    }
+}
+
+fn az_invocation(args: &[String]) -> AzInvocation {
+    az_invocation_for_runtime(resolve_zip_runtime().as_ref(), args)
 }
 
 /// Result of one finished command.
@@ -70,6 +207,22 @@ pub trait CommandRunner: Send + Sync {
         args: &[String],
         timeout: Duration,
     ) -> io::Result<CmdOutput>;
+
+    /// Run the Azure CLI through its platform-specific invocation boundary.
+    /// Test and alternate runners retain the old behavior unless they opt in.
+    fn run_az(&self, args: &[String]) -> io::Result<CmdOutput> {
+        self.run(az_program(), args)
+    }
+
+    /// Run the Azure CLI through its platform-specific invocation boundary
+    /// with an explicit timeout.
+    fn run_az_with_timeout(
+        &self,
+        args: &[String],
+        timeout: Duration,
+    ) -> io::Result<CmdOutput> {
+        self.run_with_timeout(az_program(), args, timeout)
+    }
 }
 
 /// Spawns real processes with `std::process::Command` (argument array, no
@@ -90,20 +243,30 @@ impl Default for SystemRunner {
     }
 }
 
-impl CommandRunner for SystemRunner {
-    fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput> {
-        self.run_with_timeout(program, args, self.timeout)
+impl SystemRunner {
+    fn run_invocation(
+        &self,
+        invocation: &AzInvocation,
+        timeout: Duration,
+    ) -> io::Result<CmdOutput> {
+        self.run_with_timeout_and_installer(
+            &invocation.program,
+            &invocation.args,
+            timeout,
+            invocation.installer,
+        )
     }
 
     /// Runs `program`, draining both pipes on reader threads so a large
     /// output cannot fill a pipe buffer and stall the child. If the child is
     /// still running when the timeout expires it is killed and reaped, and
     /// the call fails with [`io::ErrorKind::TimedOut`].
-    fn run_with_timeout(
+    fn run_with_timeout_and_installer<P: AsRef<OsStr>>(
         &self,
-        program: &str,
+        program: P,
         args: &[String],
         timeout: Duration,
+        installer: Option<&str>,
     ) -> io::Result<CmdOutput> {
         let mut command = std::process::Command::new(program);
         command
@@ -114,6 +277,9 @@ impl CommandRunner for SystemRunner {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        if let Some(installer) = installer {
+            command.env("AZ_INSTALLER", installer);
+        }
 
         #[cfg(windows)]
         {
@@ -157,6 +323,33 @@ impl CommandRunner for SystemRunner {
             stdout,
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
         })
+    }
+}
+
+impl CommandRunner for SystemRunner {
+    fn run(&self, program: &str, args: &[String]) -> io::Result<CmdOutput> {
+        self.run_with_timeout(program, args, self.timeout)
+    }
+
+    fn run_with_timeout(
+        &self,
+        program: &str,
+        args: &[String],
+        timeout: Duration,
+    ) -> io::Result<CmdOutput> {
+        self.run_with_timeout_and_installer(program, args, timeout, None)
+    }
+
+    fn run_az(&self, args: &[String]) -> io::Result<CmdOutput> {
+        self.run_az_with_timeout(args, self.timeout)
+    }
+
+    fn run_az_with_timeout(
+        &self,
+        args: &[String],
+        timeout: Duration,
+    ) -> io::Result<CmdOutput> {
+        self.run_invocation(&az_invocation(args), timeout)
     }
 }
 
@@ -306,8 +499,8 @@ impl<R: CommandRunner> AzCliProvider<R> {
         operation: VaultOperation,
     ) -> Result<CmdOutput, VaultError> {
         let result = match timeout {
-            Some(timeout) => self.runner.run_with_timeout(az_program(), args, timeout),
-            None => self.runner.run(az_program(), args),
+            Some(timeout) => self.runner.run_az_with_timeout(args, timeout),
+            None => self.runner.run_az(args),
         };
         let output = match result {
             Ok(output) => output,
@@ -816,6 +1009,217 @@ mod tests {
         } else {
             assert_eq!(az_program(), "az");
         }
+    }
+
+    fn zip_root(parent: &Path, name: &str) -> PathBuf {
+        let root = parent.join(name);
+        let bin = root.join("bin");
+        let module = root.join("Lib").join("site-packages").join("azure").join("cli");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&module).unwrap();
+        std::fs::write(bin.join("az.cmd"), "@echo off\r\n").unwrap();
+        std::fs::write(root.join("python.exe"), "fixture").unwrap();
+        std::fs::write(module.join("__main__.pyc"), "fixture").unwrap();
+        root
+    }
+
+    #[test]
+    fn windows_zip_runtime_requires_the_wrapper_python_and_same_root_module() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = zip_root(dir.path(), "azure");
+        let bin = root.join("bin");
+
+        assert_eq!(validated_zip_runtime_from_bin(&bin).unwrap().root, root);
+
+        std::fs::remove_file(root.join("Lib/site-packages/azure/cli/__main__.pyc")).unwrap();
+        assert!(validated_zip_runtime_from_bin(&bin).is_none());
+        std::fs::write(
+            root.join("Lib/site-packages/azure/cli/__main__.pyc"),
+            "fixture",
+        )
+        .unwrap();
+        std::fs::remove_file(root.join("python.exe")).unwrap();
+        assert!(validated_zip_runtime_from_bin(&bin).is_none());
+        std::fs::write(root.join("python.exe"), "fixture").unwrap();
+        std::fs::remove_file(bin.join("az.cmd")).unwrap();
+        assert!(validated_zip_runtime_from_bin(&bin).is_none());
+    }
+
+    #[test]
+    fn zip_runtime_selection_prefers_explicit_hints_then_the_selected_path_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let explicit = zip_root(dir.path(), "explicit");
+        let path = zip_root(dir.path(), "path");
+        let selected = resolve_zip_runtime_from(
+            &[explicit.join("bin")],
+            &[path.join("bin")],
+            &[],
+        )
+        .expect("paired runtime");
+        assert_eq!(selected.root, explicit);
+
+        let wrapper_only = dir.path().join("wrapper-only");
+        std::fs::create_dir_all(&wrapper_only).unwrap();
+        std::fs::write(wrapper_only.join("az.cmd"), "wrapper").unwrap();
+        let later = zip_root(dir.path(), "later");
+        assert!(resolve_zip_runtime_from(
+            &[],
+            &[wrapper_only, later.join("bin")],
+            &[]
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn a_known_scoop_wrapper_may_pair_only_with_its_validated_current_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let scoop = dir.path().join("scoop");
+        let shims = scoop.join("shims");
+        std::fs::create_dir_all(&shims).unwrap();
+        std::fs::write(shims.join("az.cmd"), "wrapper").unwrap();
+        let current = scoop.join("apps/azure-cli/current");
+        let current_bin = current.join("bin");
+        let module = current.join("Lib/site-packages/azure/cli");
+        std::fs::create_dir_all(&current_bin).unwrap();
+        std::fs::create_dir_all(&module).unwrap();
+        std::fs::write(current_bin.join("az.cmd"), "real wrapper").unwrap();
+        std::fs::write(current.join("python.exe"), "fixture").unwrap();
+        std::fs::write(module.join("__main__.pyc"), "fixture").unwrap();
+
+        let resolved = resolve_zip_runtime_from(&[], &[shims], &[scoop]).unwrap();
+        assert_eq!(resolved.root, current);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn direct_invocation_does_not_fallback_for_an_unpaired_surrogate_path() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        let python = OsString::from_wide(&['C' as u16, ':' as u16, '\\' as u16, 0xd800, 'x' as u16]);
+        let runtime = ZipRuntime {
+            root: PathBuf::new(),
+            bin: PathBuf::new(),
+            python: PathBuf::from(&python),
+        };
+
+        let invocation = az_invocation_for_runtime(Some(&runtime), &[]);
+
+        assert_eq!(invocation.program, PathBuf::from(&python));
+    }
+
+    #[test]
+    fn direct_zip_invocation_preserves_original_arguments_as_separate_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = zip_root(dir.path(), "azure");
+        let runtime = validated_zip_runtime_from_bin(&root.join("bin")).unwrap();
+        let original = strings(&["keyvault", "secret", "show", "name with spaces", "quote\"value"]);
+
+        let invocation = az_invocation_for_runtime(Some(&runtime), &original);
+
+        assert_eq!(invocation.program, runtime.python);
+        assert_eq!(
+            invocation.args,
+            strings(&[
+                "-X",
+                "utf8",
+                "-I",
+                "-B",
+                "-m",
+                "azure.cli",
+                "keyvault",
+                "secret",
+                "show",
+                "name with spaces",
+                "quote\"value",
+            ])
+        );
+        assert_eq!(invocation.installer, Some("ZIP"));
+    }
+
+    #[test]
+    fn unsupported_zip_layout_falls_back_without_rewriting_az_arguments() {
+        let original = strings(&["account", "show", "-o", "json"]);
+        let invocation = az_invocation_for_runtime(None, &original);
+
+        assert_eq!(invocation.program, PathBuf::from(az_program()));
+        assert_eq!(invocation.args, original);
+        assert_eq!(invocation.installer, None);
+    }
+
+    #[cfg(windows)]
+    fn copy_python_fixture_support(source: &ZipRuntime, root: &Path) {
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::copy(&source.python, root.join("python.exe")).unwrap();
+        for entry in std::fs::read_dir(&source.root).unwrap().flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.file_name() == Some(std::ffi::OsStr::new("python.exe")) {
+                continue;
+            }
+            let extension = path.extension().and_then(|extension| extension.to_str());
+            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+            if matches!(extension, Some("dll") | Some("zip") | Some("_pth"))
+                || name.starts_with("python")
+            {
+                std::fs::copy(&path, root.join(path.file_name().unwrap())).unwrap();
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bundled_python_fixture_emits_accented_utf8_json_and_receives_exact_args() {
+        let Some(source) = resolve_zip_runtime() else {
+            println!("SKIPPED: no validated Azure CLI ZIP runtime was available");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("fixture with spaces café");
+        copy_python_fixture_support(&source, &root);
+        let bin = root.join("bin");
+        let module = root.join("Lib/site-packages/azure/cli");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&module).unwrap();
+        std::fs::write(bin.join("az.cmd"), "@echo off\r\n").unwrap();
+        std::fs::write(root.join("python.exe"), std::fs::read(&source.python).unwrap()).unwrap();
+        std::fs::write(root.join("Lib/site-packages/azure/__init__.py"), "").unwrap();
+        std::fs::write(module.join("__init__.py"), "").unwrap();
+        std::fs::write(
+            module.join("__main__.py"),
+            r#"import os
+import sys
+expected = ["keyvault", "secret", "show", "name with spaces", 'quote"value']
+if sys.argv[1:] != expected or os.environ.get("AZ_INSTALLER") != "ZIP":
+    raise SystemExit(7)
+sys.stdout.write('{"args":["keyvault","secret","show","name with spaces","quote\\\"value"],"value":"café"}')
+"#,
+        )
+        .unwrap();
+        let runtime = validated_zip_runtime_from_bin(&bin).expect("synthetic ZIP layout");
+        let original = strings(&[
+            "keyvault",
+            "secret",
+            "show",
+            "name with spaces",
+            "quote\"value",
+        ]);
+        let invocation = az_invocation_for_runtime(Some(&runtime), &original);
+        let output = SystemRunner::new(Duration::from_secs(30))
+            .run_invocation(&invocation, Duration::from_secs(30))
+            .expect("synthetic bundled Python");
+
+        assert!(output.status_ok, "stderr was not copied into the assertion");
+        assert_eq!(
+            std::str::from_utf8(&output.stdout).expect("strict UTF-8"),
+            r#"{"args":["keyvault","secret","show","name with spaces","quote\"value"],"value":"café"}"#
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn bundled_python_process_regression_is_not_applicable_off_windows() {
+        println!("NOT APPLICABLE: Windows bundled Python invocation is not used");
+        assert_eq!(az_program(), "az");
     }
 
     // --- whoami ---

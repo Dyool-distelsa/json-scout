@@ -14,7 +14,7 @@ Never expose secret values, raw stdout/stderr, unredacted CLI arguments, staged 
 - [x] T2 Expose consultable/copyable reports in the vault UI, with tests and documentation. (Newline regression corrected and checked.)
 - [ ] T3 Verify integrated behavior and review applicable candidate.
 - [x] T4 Prepare Windows/Linux 0.2.3 version and release notes; verify native installer build.
-- [ ] T5 Create work-unit commits and push feature branch; install new Windows version locally and verify observable installation evidence.
+- [x] T5 Create work-unit commits and push feature branch; install new Windows version locally and verify observable installation evidence.
 - [ ] T6 Prepare official Windows/Linux draft release after remote/policy checks; no unsupported merge or published-completeness claims.
 - [ ] T7 Prepare separate official macOS signed/notarized release plan and identify secure credential/build-validation prerequisites.
 
@@ -40,8 +40,13 @@ T3 independent checks: npm test 764 passed; cargo test --manifest-path src-tauri
 - UI/tests/docs commit: 56bcf72.
 - Version/release notes commit: 62ece50.
 - T4 npm test 765 passed; cargo test 254 passed; npm run tauri build passed, MSI/NSIS 0.2.3 artifacts generated. Metadata/docs-only change used structural validation (no meaningful RED).
-- GitHub API release lookup failed definitively with 401 Bad credentials. No remote release mutation attempted. SSH push pending independently.
-- Local installers not yet run; clean-commit rebuild pending.
+- GitHub API release lookup failed definitively with 401 Bad credentials. No remote release mutation attempted. SSH push succeeded for feat/vault-diagnostics-release at d752e97. Valid keyring authentication confirmed using per-command omission of invalid GH_TOKEN/GITHUB_TOKEN; API release lookup succeeds (v0.2.2 draft, v0.2.1 latest).
+- Installation worker retained evidence: clean rebuild passed; NSIS /S exit 0; installed 0.2.3 existing per-user path; app window opened. Worker task settlement failed (child exit unconfirmed), so independent installation readback delegated; do not rerun installer. Built/installed hashes differ in bundle marker reportedly UNK vs NSS.
+- Roaming app-data immediate entry count decreased 1 to 0 after launch; read-only separate incident scout delegated before release. No deletion/restoration authorized. Context menu entries preserved but point at previous build path. Vault interaction smoke pending.
+
+## Independent installation confirmation
+Installed per-user executable and HKCU entry both report 0.2.3; running installed app has visible JSON Scout window. Binary differs from build in exactly three bytes (UNK to NSS), confirmed expected Tauri NSIS bundle marker. Workspace synthetic tests: 50 passed, siblings preserved, basename guard enforced. Cleanup predates candidate and is documented session behavior; exact removed entry remains unknown. No live data read/restored/deleted.
+Remote branch d752e97 is four commits ahead/zero behind main; no candidate CI runs/PR, no v0.2.3 tag/release. Repository main unprotected, viewer ADMIN. Release workflow must run candidate revision, not old main. Integration decision pending; no merge authorized yet.
 
 ## Next step
 Post-correction independent verifier passed 103 focused tests and git diff --check, confirmed clipboard and fallback share the newline-formatted report; no findings. Next: manual desktop smoke (Vault > Last diagnostic > Copy report). Native inspect blocked: native-status-package-binary-missing; no lineage created and no mutation. Native review unavailable despite mode on. Desktop smoke remains pending because no safe synthetic-failure browser/desktop harness is available. Report these limitations; no package/environment changes authorized.

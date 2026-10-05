@@ -4,38 +4,21 @@ A lightweight cross-platform (Windows and Linux) desktop JSON toolbox, built to 
 
 ## Release status
 
-The next combined `v0.2.4` release is prepared but not published. This work does not make Windows/Linux installers or macOS DMGs available for download. See the [v0.2.4 preparation notes](docs/releases/v0.2.4.md) and [macOS v0.2.4 experimental notes](docs/releases/macos-v0.2.4.md) for the current status.
+The next combined `v0.2.4` release is prepared but not published. Remote verification produced a five-asset Windows/Linux draft with GitHub-reported SHA-256 digests, but it is not a published stable release. The separate macOS draft currently has zero assets. See the [v0.2.4 preparation notes](docs/releases/v0.2.4.md) and [macOS v0.2.4 experimental notes](docs/releases/macos-v0.2.4.md) for the current status.
 
-## Install
+## Quick install
 
-When a stable release is published, download the installer for your OS from the [Releases page](https://github.com/Dyool-distelsa/json-scout/releases). The prepared `v0.2.4` version is not a download link or a claim that release assets exist yet.
+Use the [canonical installation and Azure Key Vault runbook](docs/installation.md) for exact release approval, architecture checks, hashes, install/update/uninstall steps, and agent stop conditions. Download only an asset visibly present in the approved [Releases page](https://github.com/Dyool-distelsa/json-scout/releases); the prepared `v0.2.4` notes are not a download link.
 
-**Windows**
+| Platform | Runtime artifacts | Status |
+| --- | --- | --- |
+| Windows | NSIS `.exe` (per-user) or MSI | Stable; unsigned installers may trigger SmartScreen or Smart App Control. |
+| Linux | `.deb`, `.rpm`, or AppImage | Stable; choose the format matching the installed distribution. |
+| macOS | Intel or Apple Silicon DMG, only if an experimental draft contains it | Experimental, ad-hoc signed, not notarized; no universal macOS support claim. |
 
-- Run the NSIS `.exe` (per-user install) or the `.msi`.
-- The installers are unsigned. Windows SmartScreen may warn ("Windows protected your PC"): click **More info** then **Run anyway**. Smart App Control, if enabled, can block unsigned apps outright; it can only be turned off in Windows Security settings (see Known limitations).
+Check the machine's actual architecture, copy the exact approved filename, and record its source URL and SHA-256 provenance before installing. The [macOS v0.2.4 notes](docs/releases/macos-v0.2.4.md) describe preparation status only.
 
-**Linux**
-
-```bash
-sudo apt install ./JSON*Scout*.deb     # Debian / Ubuntu
-sudo dnf install ./JSON*Scout*.rpm     # Fedora / RHEL
-chmod +x JSON*Scout*.AppImage && ./JSON*Scout*.AppImage   # AppImage, no install
-```
-
-On Linux the installed desktop entry registers JSON Scout as a JSON handler, so **Open with** works from your file manager. The Explorer context-menu integration below is Windows-only.
-
-## Experimental macOS builds (not stable support)
-
-macOS artifacts, if a future run completes, are separate, manual-only experimental prereleases for Intel and Apple Silicon. The next candidate uses the `macos-v0.2.4` namespace. They are ad-hoc signed with the `-` identity, **not Developer ID signed or notarized**, and macOS is not a supported stable platform. Do not treat these builds as evidence of official macOS support; release smoke testing remains pending. See the [macOS v0.2.4 experimental notes](docs/releases/macos-v0.2.4.md).
-
-If an eventual draft contains an artifact and you choose to test it:
-
-1. Download it only from this project's GitHub release and review the specific release notes.
-2. If Gatekeeper warns, try Finder's **Control-click → Open** for this app, or attempt one launch and use **System Settings → Privacy & Security → Open Anyway** for JSON Scout.
-3. Approve only this app if you trust the source. Do **not** disable Gatekeeper globally or use commands such as `spctl --master-disable`; if the source or warning is unexpected, do not open it.
-
-The experimental workflow is manual-only: it accepts a full 40-character commit SHA and a `macos-v<version>` tag, builds each native target with read-only permissions, and transfers only run-bound DMG artifacts to a guarded draft prerelease. It never publishes the draft, changes stable releases, or marks a release latest.
+**Runtime versus source build:** a runtime install needs neither Node.js nor Rust. Source development/builds need Node.js/npm, stable Rust, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). The optional Azure Key Vault plugin additionally needs the user's separately installed [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), not a Node/Rust fallback.
 
 ## Features
 
@@ -79,18 +62,14 @@ A second click of any "Open in JSON Scout" / "JSON Scout here" entry reuses the 
 
 ## Azure Key Vault plugin (optional)
 
-An optional plugin, off by default, that pulls secrets from an Azure Key Vault into the editor, lets you edit them and push a new version back after a masked review. It uses your existing Azure CLI (`az`) session and never reads or stores tokens. Turn it on from the toolbar **Plugins** menu; see the [Azure Key Vault guide](docs/azure-key-vault.md) for requirements, permissions, sign-in and troubleshooting.
+The plugin is off by default. It uses the user's existing Azure CLI (`az`) session, never stores tokens, and requires the desktop app. Turn it on from the toolbar **Plugins** menu only after the account, permissions, network, and explicit read/write approval are ready. See the [Azure Key Vault guide](docs/azure-key-vault.md) and the [canonical runbook](docs/installation.md).
 
-## Prerequisites
+## Source-build prerequisites
 
 - [Node.js](https://nodejs.org/) 18+ and npm
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
-- **Windows:** the MSVC build tools, required by Tauri, and [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (already present on modern Windows 11 installs)
-- **Linux:** the Tauri v2 system libraries (Debian/Ubuntu package names):
-
-  ```bash
-  sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
-  ```
+- **Windows source builds:** Tauri's [MSVC prerequisites](https://v2.tauri.app/start/prerequisites/); the WebView2 Runtime is a separate Windows runtime prerequisite for running the desktop app.
+- **Linux:** Tauri's [system prerequisites](https://v2.tauri.app/start/prerequisites/); follow that page for distro-specific packages.
 
 ## Development
 
@@ -134,7 +113,7 @@ CI (`.github/workflows/ci.yml`) runs the JS and Rust tests on Ubuntu and Windows
 
 The workflow can also be run manually from the Actions tab (`workflow_dispatch`, with a `tag` and `prerelease` inputs) as a dry run, passing a throwaway `tag` (for example `v0.0.0-test`): it only creates a draft release, which you can delete afterwards. A tag that already has a published release is refused, so published assets are never overwritten.
 
-The experimental macOS workflow (`.github/workflows/macos-experimental.yml`) is separate from the Windows/Linux release workflow. It checks the selected commit against the application version and defaults to `macos-v0.2.4`; it does not publish a draft, change stable releases, or imply that macOS is supported. Actual macOS builds and smoke testing remain pending.
+The experimental macOS workflow (`.github/workflows/macos-experimental.yml`) is separate from the Windows/Linux release workflow. It checks the selected commit against the application version and defaults to `macos-v0.2.4`; it does not publish a draft, change stable releases, or imply that macOS is supported. Native Intel and Apple Silicon builds passed; desktop smoke testing remains pending. The experimental draft has no downloadable DMGs until the failed asset-upload step is corrected.
 
 ## Project layout
 
@@ -163,13 +142,13 @@ odd/tasks/              Per-feature task documents (scope, tasks, verification e
 
 scripts/                 Standalone PowerShell fallback for the context-menu install
 
-docs/                    User guides (docs/azure-key-vault.md)
+docs/                    User guides (docs/installation.md, docs/azure-key-vault.md)
 ```
 
 ## Known limitations
 
 - Very large integers (beyond `Number.MAX_SAFE_INTEGER`) lose precision on format/minify/validate, the same way `JSON.parse`/`JSON.stringify` do natively. This is documented and tested rather than silently "fixed" with a lossless-number rewrite.
-- The Windows binaries and installers are unsigned. Windows Smart App Control may block them ("An Application Control policy has blocked this file"); turn Smart App Control off or sign the executable to run them. SmartScreen only warns and can be bypassed with **Run anyway**.
+- The Windows binaries and installers are unsigned. Smart App Control or an enterprise policy may block them ("An Application Control policy has blocked this file"). Stop and obtain an administrator-approved per-app policy path if your organization permits it; do not turn off Smart App Control globally or use an arbitrary bypass. SmartScreen may warn; use **Run anyway** only for the explicitly approved asset.
 - The Explorer context-menu integration is Windows-only. Linux relies on the desktop entry installed by the deb/rpm/AppImage packages.
 - Browsers without Tauri get a degraded fallback (file input / download) instead of native dialogs; the desktop app is the supported target.
 

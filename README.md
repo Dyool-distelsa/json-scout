@@ -21,6 +21,18 @@ chmod +x JSON*Scout*.AppImage && ./JSON*Scout*.AppImage   # AppImage, no install
 
 On Linux the installed desktop entry registers JSON Scout as a JSON handler, so **Open with** works from your file manager. The Explorer context-menu integration below is Windows-only.
 
+## Experimental macOS builds (not stable support)
+
+macOS artifacts are separate, manual-only experimental prereleases for Intel and Apple Silicon. They are ad-hoc signed with the `-` identity, **not Developer ID signed or notarized**, and macOS is not a supported stable platform. Do not treat these builds as evidence of official macOS support; release smoke testing remains pending.
+
+If you choose to test one:
+
+1. Download it only from this project's GitHub release and review the specific release notes.
+2. If Gatekeeper warns, try Finder's **Control-click → Open** for this app, or attempt one launch and use **System Settings → Privacy & Security → Open Anyway** for JSON Scout.
+3. Approve only this app if you trust the source. Do **not** disable Gatekeeper globally or use commands such as `spctl --master-disable`; if the source or warning is unexpected, do not open it.
+
+The experimental workflow is manual-only: it accepts a full 40-character commit SHA and a `macos-v<version>` tag, builds each native target with read-only permissions, and transfers only run-bound DMG artifacts to a guarded draft prerelease. It never publishes the draft, changes stable releases, or marks a release latest.
+
 ## Features
 
 - **Format** JSON with configurable indent (2 spaces, 4 spaces, or tab)
@@ -117,6 +129,8 @@ CI (`.github/workflows/ci.yml`) runs the JS and Rust tests on Ubuntu and Windows
 4. Review the draft on GitHub, then publish it.
 
 The workflow can also be run manually from the Actions tab (`workflow_dispatch`, with a `tag` and `prerelease` inputs) as a dry run, passing a throwaway `tag` (for example `v0.0.0-test`): it only creates a draft release, which you can delete afterwards. A tag that already has a published release is refused, so published assets are never overwritten.
+
+The experimental macOS workflow (`.github/workflows/macos-experimental.yml`) is separate from the Windows/Linux release workflow. It does not change the application version; version migrations are prepared separately.
 
 ## Project layout
 

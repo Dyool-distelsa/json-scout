@@ -1,0 +1,449 @@
+# Manual-only experimental macOS prerelease workflow.
+# It intentionally has no push/tag trigger and never publishes a release.
+name: Experimental macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full 40-character commit SHA to build (branches and tags are rejected)
+        required: true
+        type: string
+      tag:
+        description: macOS release tag; it must match the checked-out app version
+        required: true
+        default: macos-v0.2.3
+        type: string
+
+concurrency:
+  group: macos-experimental-${{ inputs.tag }}
+  cancel-in-progress: false
+
+# Builds execute caller-selected source, so the workflow-wide token is read-only.
+permissions:
+  contents: read
+
+jobs:
+  validate-inputs:
+    name: Validate dispatch inputs
+    permissions:
+      contents: read
+    runs-on: ubuntu-22.04
+    env:
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Reject unsafe input shapes
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const commit = process.env.RELEASE_COMMIT ?? "";
+          const tag = process.env.RELEASE_TAG ?? "";
+
+          if (!/^[0-9a-fA-F]{40}$/.test(commit)) {
+            console.error("commit must be a full 40-character hexadecimal SHA");
+            process.exit(1);
+          }
+
+          if (!/^macos-v\d+\.\d+\.\d+$/.test(tag)) {
+            console.error("tag must use the macos-v<major>.<minor>.<patch> namespace");
+            process.exit(1);
+          }
+          NODE
+
+  build:
+    name: Build ${{ matrix.label }} DMG
+    needs: validate-inputs
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            asset_suffix: intel
+          - label: Apple Silicon
+            runner: macos-15
+            target: aarch64-apple-darwin
+            asset_suffix: arm64
+    env:
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      TARGET: ${{ matrix.target }}
+      ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+    steps:
+      # v4.2.2
+      - name: Check out the requested commit without persisting credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify the pinned checkout, host architecture, and app version
+        run: |
+          set -euo pipefail
+          normalized_commit="$(printf '%s' "$RELEASE_COMMIT" | tr '[:upper:]' '[:lower:]')"
+          checked_out_commit="$(git rev-parse HEAD)"
+          if [ "$checked_out_commit" != "$normalized_commit" ]; then
+            echo "::error::The build checkout does not match the requested commit."
+            exit 1
+          fi
+
+          host_arch="$(uname -m)"
+          case "$TARGET:$host_arch" in
+            x86_64-apple-darwin:x86_64) ;;
+            aarch64-apple-darwin:arm64) ;;
+            *)
+              echo "::error::Runner architecture does not match target $TARGET (uname -m: $host_arch)."
+              exit 1
+              ;;
+          esac
+
+          node <<'NODE'
+          const fs = require("node:fs");
+          const tag = process.env.RELEASE_TAG ?? "";
+          const tagMatch = /^macos-v(\d+\.\d+\.\d+)$/.exec(tag);
+          if (!tagMatch) {
+            console.error("tag must use the macos-v<major>.<minor>.<patch> namespace");
+            process.exit(1);
+          }
+
+          const expectedVersion = tagMatch[1];
+          const packageVersion = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+          const tauriVersion = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
+          const cargoMatch = /^version\s*=\s*"([^"]+)"/m.exec(
+            fs.readFileSync("src-tauri/Cargo.toml", "utf8"),
+          );
+          const cargoVersion = cargoMatch?.[1];
+
+          if (![packageVersion, tauriVersion, cargoVersion].every((version) => version === expectedVersion)) {
+            console.error("tag version does not match package.json, src-tauri/Cargo.toml, and src-tauri/tauri.conf.json");
+            process.exit(1);
+          }
+          if (!fs.existsSync(`docs/releases/macos-v${expectedVersion}.md`)) {
+            console.error("release notes for this app version are missing from the pinned commit");
+            process.exit(1);
+          }
+          NODE
+
+      # v4.4.0
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: npm
+
+      # stable branch commit
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          targets: ${{ matrix.target }}
+
+      # Every command below runs with only the job's contents:read permission.
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: JS tests
+        run: npm test
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Rust tests
+        run: cargo test
+        working-directory: src-tauri
+
+      - name: Build ad-hoc signed DMG only
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: |
+          set -euo pipefail
+          npm run tauri build -- --target "$TARGET" --bundles dmg
+
+      - name: Prepare uniquely named DMG
+        id: package
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmg_paths=("src-tauri/target/$TARGET/release/bundle/dmg/"*.dmg)
+          if [ "${#dmg_paths[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one DMG for $TARGET."
+            exit 1
+          fi
+          source_dmg="${dmg_paths[0]}"
+          if [ -L "$source_dmg" ] || [ ! -f "$source_dmg" ] || [ ! -s "$source_dmg" ]; then
+            echo "::error::The built DMG is not a non-empty regular file."
+            exit 1
+          fi
+          asset_name="JSON-Scout-${RELEASE_TAG#macos-v}-${ASSET_SUFFIX}.dmg"
+          ditto "$source_dmg" "$asset_name"
+          if [ -L "$asset_name" ] || [ ! -f "$asset_name" ] || [ ! -s "$asset_name" ]; then
+            echo "::error::The packaged DMG is not a non-empty regular file."
+            exit 1
+          fi
+          printf 'asset_name=%s\n' "$asset_name" >> "$GITHUB_OUTPUT"
+
+      # v4.6.2
+      - name: Upload DMG as a run-bound opaque artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-dmg-${{ github.run_id }}-${{ matrix.asset_suffix }}
+          path: ${{ steps.package.outputs.asset_name }}
+          if-no-files-found: error
+          retention-days: 1
+
+  upload-release:
+    name: Upload guarded draft prerelease
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    env:
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      # v4.3.0; run-id and the run-specific names prevent cross-run artifact reuse.
+      - name: Download Intel DMG from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: macos-dmg-${{ github.run_id }}-intel
+          path: downloaded/intel
+          run-id: ${{ github.run_id }}
+
+      # v4.3.0
+      - name: Download Apple Silicon DMG from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: macos-dmg-${{ github.run_id }}-arm64
+          path: downloaded/arm64
+          run-id: ${{ github.run_id }}
+
+      - name: Validate downloaded DMGs as opaque regular files
+        run: |
+          set -euo pipefail
+          case "$GITHUB_RUN_ID" in
+            ''|*[!0-9]*) echo "::error::Invalid workflow run id."; exit 1 ;;
+          esac
+          root_entries=()
+          while IFS= read -r -d '' entry; do root_entries+=("$entry"); done < <(find downloaded -mindepth 1 -maxdepth 1 -print0)
+          if [ "${#root_entries[@]}" -ne 2 ]; then
+            echo "::error::Expected exactly two downloaded artifact directories."
+            exit 1
+          fi
+
+          for spec in \
+            "intel|JSON-Scout-${RELEASE_TAG#macos-v}-intel.dmg" \
+            "arm64|JSON-Scout-${RELEASE_TAG#macos-v}-arm64.dmg"; do
+            artifact_dir="downloaded/${spec%%|*}"
+            expected_name="${spec#*|}"
+            if [ -L "$artifact_dir" ] || [ ! -d "$artifact_dir" ]; then
+              echo "::error::Downloaded artifact directory is not a real directory: $artifact_dir"
+              exit 1
+            fi
+            entries=()
+            while IFS= read -r -d '' entry; do entries+=("$entry"); done < <(find "$artifact_dir" -mindepth 1 -maxdepth 1 -print0)
+            if [ "${#entries[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly one file in $artifact_dir."
+              exit 1
+            fi
+            dmg_path="${entries[0]}"
+            if [ "$(basename -- "$dmg_path")" != "$expected_name" ] || \
+               [ -L "$dmg_path" ] || [ ! -f "$dmg_path" ] || [ ! -s "$dmg_path" ]; then
+              echo "::error::Downloaded artifact failed opaque DMG validation: $dmg_path"
+              exit 1
+            fi
+          done
+
+          symlink_path="$(find downloaded -type l -print -quit)"
+          if [ -n "$symlink_path" ]; then
+            echo "::error::Downloaded artifacts must not contain symlinks."
+            exit 1
+          fi
+          file_count="$(find downloaded -type f | wc -l | tr -d '[:space:]')"
+          if [ "$file_count" -ne 2 ]; then
+            echo "::error::Expected exactly two regular downloaded files."
+            exit 1
+          fi
+          # Do not mount, inspect, source, or execute downloaded bytes.
+
+      - name: Create or reuse only the matching draft prerelease
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          normalized_commit="$(printf '%s' "$RELEASE_COMMIT" | tr '[:upper:]' '[:lower:]')"
+
+          validate_release() {
+            local release_json="$1"
+            if [ "$(jq -r '.tag_name // empty' <<< "$release_json")" != "$RELEASE_TAG" ] || \
+               [ "$(jq -r '.target_commitish // empty' <<< "$release_json")" != "$normalized_commit" ] || \
+               [ "$(jq -r '.draft // false' <<< "$release_json")" != "true" ] || \
+               [ "$(jq -r '.prerelease // false' <<< "$release_json")" != "true" ]; then
+              echo "::error::Release is not the requested draft prerelease for the pinned commit."
+              exit 1
+            fi
+            make_latest="$(jq -r 'if has("make_latest") then (.make_latest | tostring) else "" end' <<< "$release_json")"
+            if [ -n "$make_latest" ] && [ "$make_latest" != "false" ]; then
+              echo "::error::Release has make_latest=true; refusing to alter it."
+              exit 1
+            fi
+          }
+
+          tag_commit() {
+            local tag_response tag_status=0 tag_body tag_object tag_detail
+            tag_response="$(gh api --include "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" 2>&1)" || tag_status=$?
+            if [ "$tag_status" -ne 0 ]; then
+              if grep -Eq '^HTTP/[0-9.]+[[:space:]]+404([[:space:]]|$)' <<< "$tag_response"; then
+                return 0
+              fi
+              echo "::error::Unable to verify the requested tag." >&2
+              return 1
+            fi
+            tag_body="$(awk 'BEGIN { body = 0 } body { sub(/\r$/, ""); print } /^\r?$/ { body = 1 }' <<< "$tag_response")"
+            tag_object="$(jq -r '.object.type + " " + .object.sha' <<< "$tag_body")"
+            case "$tag_object" in
+              commit\ *) printf '%s\n' "${tag_object#commit }" ;;
+              tag\ *)
+                tag_detail="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/${tag_object#tag }")"
+                jq -r '.object.sha' <<< "$tag_detail"
+                ;;
+              *) echo "::error::The tag ref has an unsupported object type." >&2; return 1 ;;
+            esac
+          }
+
+          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          matching="$(jq -c --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)]' <<< "$releases")"
+          matching_count="$(jq 'length' <<< "$matching")"
+          if [ "$matching_count" -gt 1 ]; then
+            echo "::error::Multiple releases already exist for this macOS tag; refusing ambiguity."
+            exit 1
+          fi
+
+          if [ "$matching_count" -eq 1 ]; then
+            existing="$(jq -c '.[0]' <<< "$matching")"
+            if [ "$(jq -r '.draft // false' <<< "$existing")" != "true" ]; then
+              echo "::error::A published release already exists for this macOS tag; refusing replacement."
+              exit 1
+            fi
+            validate_release "$existing"
+            release_id="$(jq -r '.id // empty' <<< "$existing")"
+          else
+            # This check is immediately before creation. An existing tag may only point at the requested commit.
+            existing_tag_commit="$(tag_commit)"
+            if [ -n "$existing_tag_commit" ] && [ "$existing_tag_commit" != "$normalized_commit" ]; then
+              echo "::error::The requested tag already points at a different commit."
+              exit 1
+            fi
+
+            release_body="Manual-only experimental macOS prerelease for $RELEASE_TAG. See docs/releases/$RELEASE_TAG.md at the selected commit."
+            payload="$(jq -n \
+              --arg tag "$RELEASE_TAG" \
+              --arg target "$normalized_commit" \
+              --arg name "JSON Scout $RELEASE_TAG (Experimental macOS)" \
+              --arg body "$release_body" \
+              '{tag_name: $tag, target_commitish: $target, name: $name, body: $body, draft: true, prerelease: true, make_latest: "false"}')"
+            created="$(printf '%s' "$payload" | gh api "repos/$GITHUB_REPOSITORY/releases" --method POST --header 'Content-Type: application/json' --input -)"
+            validate_release "$created"
+            release_id="$(jq -r '.id // empty' <<< "$created")"
+          fi
+
+          case "$release_id" in
+            ''|*[!0-9]*) echo "::error::GitHub returned an invalid release id."; exit 1 ;;
+          esac
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate the guarded draft and upload opaque DMGs without clobbering assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          normalized_commit="$(printf '%s' "$RELEASE_COMMIT" | tr '[:upper:]' '[:lower:]')"
+
+          validate_release() {
+            local release_json="$1"
+            if [ "$(jq -r '.tag_name // empty' <<< "$release_json")" != "$RELEASE_TAG" ] || \
+               [ "$(jq -r '.target_commitish // empty' <<< "$release_json")" != "$normalized_commit" ] || \
+               [ "$(jq -r '.draft // false' <<< "$release_json")" != "true" ] || \
+               [ "$(jq -r '.prerelease // false' <<< "$release_json")" != "true" ]; then
+              echo "::error::The draft changed before upload; refusing to upload to a drifted release."
+              exit 1
+            fi
+            make_latest="$(jq -r 'if has("make_latest") then (.make_latest | tostring) else "" end' <<< "$release_json")"
+            if [ -n "$make_latest" ] && [ "$make_latest" != "false" ]; then
+              echo "::error::The draft changed its make_latest setting; refusing upload."
+              exit 1
+            fi
+          }
+
+          tag_commit() {
+            local tag_response tag_status=0 tag_body tag_object tag_detail
+            tag_response="$(gh api --include "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" 2>&1)" || tag_status=$?
+            if [ "$tag_status" -ne 0 ]; then
+              if grep -Eq '^HTTP/[0-9.]+[[:space:]]+404([[:space:]]|$)' <<< "$tag_response"; then
+                return 0
+              fi
+              echo "::error::Unable to verify the requested tag." >&2
+              return 1
+            fi
+            tag_body="$(awk 'BEGIN { body = 0 } body { sub(/\r$/, ""); print } /^\r?$/ { body = 1 }' <<< "$tag_response")"
+            tag_object="$(jq -r '.object.type + " " + .object.sha' <<< "$tag_body")"
+            case "$tag_object" in
+              commit\ *) printf '%s\n' "${tag_object#commit }" ;;
+              tag\ *)
+                tag_detail="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/${tag_object#tag }")"
+                jq -r '.object.sha' <<< "$tag_detail"
+                ;;
+              *) echo "::error::The tag ref has an unsupported object type." >&2; return 1 ;;
+            esac
+          }
+
+          assert_release_and_tag() {
+            local release_json tag_target
+            release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+            validate_release "$release_json"
+            tag_target="$(tag_commit)"
+            if [ -z "$tag_target" ] || [ "$tag_target" != "$normalized_commit" ]; then
+              echo "::error::The release tag no longer points at the requested commit."
+              exit 1
+            fi
+          }
+
+          upload_asset() {
+            local asset_path="$1" asset_name="$2" existing_count
+            if [ -L "$asset_path" ] || [ ! -f "$asset_path" ] || [ ! -s "$asset_path" ]; then
+              echo "::error::Refusing to upload a non-empty regular file requirement violation: $asset_path"
+              exit 1
+            fi
+            assert_release_and_tag
+            existing_count="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" | jq --arg name "$asset_name" '[.[][] | select(.name == $name)] | length')"
+            if [ "$existing_count" -ne 0 ]; then
+              echo "::error::Asset $asset_name already exists; refusing to clobber it."
+              exit 1
+            fi
+            # No --clobber: the GitHub API also rejects a race that creates this name after the guard.
+            gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$asset_name" \
+              --method POST \
+              --header 'Content-Type: application/octet-stream' \
+              --input "$asset_path" >/dev/null
+          }
+
+          upload_asset "downloaded/intel/JSON-Scout-${RELEASE_TAG#macos-v}-intel.dmg" "JSON-Scout-${RELEASE_TAG#macos-v}-intel.dmg"
+          upload_asset "downloaded/arm64/JSON-Scout-${RELEASE_TAG#macos-v}-arm64.dmg" "JSON-Scout-${RELEASE_TAG#macos-v}-arm64.dmg"
+
+          assert_release_and_tag
+          assets="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" | jq -c '[.[][]]')"
+          for expected_name in \
+            "JSON-Scout-${RELEASE_TAG#macos-v}-intel.dmg" \
+            "JSON-Scout-${RELEASE_TAG#macos-v}-arm64.dmg"; do
+            name_count="$(jq --arg name "$expected_name" '[.[] | select(.name == $name)] | length' <<< "$assets")"
+            if [ "$name_count" -ne 1 ]; then
+              echo "::error::Guarded draft must contain exactly one asset named $expected_name (found $name_count)."
+              exit 1
+            fi
+          done

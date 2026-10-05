@@ -12,7 +12,7 @@ on:
       tag:
         description: macOS release tag; it must match the checked-out app version
         required: true
-        default: macos-v0.2.3
+        default: macos-v0.2.4
         type: string
 
 concurrency:

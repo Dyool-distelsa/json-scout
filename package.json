@@ -1,7 +1,7 @@
 {
   "name": "json-scout",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "A lightweight cross-platform desktop JSON toolbox.",
   "type": "module",
   "scripts": {

@@ -2,9 +2,13 @@
 
 A lightweight cross-platform (Windows and Linux) desktop JSON toolbox, built to replace "paste your JSON into a website" with a fast native app. On Windows it also integrates with the Explorer right-click menu.
 
+## Release status
+
+The next combined `v0.2.4` release is prepared but not published. This work does not make Windows/Linux installers or macOS DMGs available for download. See the [v0.2.4 preparation notes](docs/releases/v0.2.4.md) and [macOS v0.2.4 experimental notes](docs/releases/macos-v0.2.4.md) for the current status.
+
 ## Install
 
-Download the installer for your OS from the [Releases page](https://github.com/Dyool-distelsa/json-scout/releases).
+When a stable release is published, download the installer for your OS from the [Releases page](https://github.com/Dyool-distelsa/json-scout/releases). The prepared `v0.2.4` version is not a download link or a claim that release assets exist yet.
 
 **Windows**
 
@@ -23,9 +27,9 @@ On Linux the installed desktop entry registers JSON Scout as a JSON handler, so 
 
 ## Experimental macOS builds (not stable support)
 
-macOS artifacts are separate, manual-only experimental prereleases for Intel and Apple Silicon. They are ad-hoc signed with the `-` identity, **not Developer ID signed or notarized**, and macOS is not a supported stable platform. Do not treat these builds as evidence of official macOS support; release smoke testing remains pending.
+macOS artifacts, if a future run completes, are separate, manual-only experimental prereleases for Intel and Apple Silicon. The next candidate uses the `macos-v0.2.4` namespace. They are ad-hoc signed with the `-` identity, **not Developer ID signed or notarized**, and macOS is not a supported stable platform. Do not treat these builds as evidence of official macOS support; release smoke testing remains pending. See the [macOS v0.2.4 experimental notes](docs/releases/macos-v0.2.4.md).
 
-If you choose to test one:
+If an eventual draft contains an artifact and you choose to test it:
 
 1. Download it only from this project's GitHub release and review the specific release notes.
 2. If Gatekeeper warns, try Finder's **Control-click → Open** for this app, or attempt one launch and use **System Settings → Privacy & Security → Open Anyway** for JSON Scout.
@@ -130,7 +134,7 @@ CI (`.github/workflows/ci.yml`) runs the JS and Rust tests on Ubuntu and Windows
 
 The workflow can also be run manually from the Actions tab (`workflow_dispatch`, with a `tag` and `prerelease` inputs) as a dry run, passing a throwaway `tag` (for example `v0.0.0-test`): it only creates a draft release, which you can delete afterwards. A tag that already has a published release is refused, so published assets are never overwritten.
 
-The experimental macOS workflow (`.github/workflows/macos-experimental.yml`) is separate from the Windows/Linux release workflow. It does not change the application version; version migrations are prepared separately.
+The experimental macOS workflow (`.github/workflows/macos-experimental.yml`) is separate from the Windows/Linux release workflow. It checks the selected commit against the application version and defaults to `macos-v0.2.4`; it does not publish a draft, change stable releases, or imply that macOS is supported. Actual macOS builds and smoke testing remain pending.
 
 ## Project layout
 

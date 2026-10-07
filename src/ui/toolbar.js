@@ -105,6 +105,25 @@ export function createToolbar(container, handlers, options = {}) {
   spacer.className = 'toolbar__spacer';
   container.appendChild(spacer);
 
+  // Settings and Help open as dialogs from here, not from the Tools panel.
+  const appGroup = document.createElement('div');
+  appGroup.className = 'toolbar__group';
+  for (const [key, label, title] of [
+    ['settings', 'Settings', 'Settings'],
+    ['help', 'Help', 'Version, repository, contributing and shortcuts'],
+  ]) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'tool-btn';
+    el.textContent = label;
+    el.title = title;
+    el.dataset.action = key;
+    el.setAttribute('aria-haspopup', 'dialog');
+    el.addEventListener('click', () => handlers[key]?.());
+    appGroup.appendChild(el);
+  }
+  container.appendChild(appGroup);
+
   let pluginsMenu = null;
   if (options.plugins) {
     const pluginsGroup = document.createElement('div');

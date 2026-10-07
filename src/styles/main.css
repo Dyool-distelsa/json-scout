@@ -1261,6 +1261,7 @@ body.is-resizing .right-panel {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .tab {
@@ -1268,7 +1269,7 @@ body.is-resizing .right-panel {
   background: transparent;
   border: none;
   color: var(--color-text-dim);
-  padding: 4px var(--space-3);
+  padding: 4px 6px;
   font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
@@ -2447,4 +2448,85 @@ button.danger:hover {
     --sidebar-width: 160px;
     --right-panel-width: 260px;
   }
+}
+
+/* Help panel (right panel "Help" tab). */
+.help-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 12px);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.help-section__title {
+  margin: 0 0 var(--space-2) 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+}
+
+.help-text {
+  margin: 0 0 var(--space-2) 0;
+}
+
+.help-text--dim {
+  color: var(--color-text-dim);
+}
+
+.help-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--space-3);
+  margin: 0;
+}
+
+.help-facts dt {
+  color: var(--color-text-dim);
+}
+
+.help-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.help-mono,
+.help-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.help-code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--color-bg-active);
+}
+
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.help-link {
+  color: var(--color-accent-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.help-link:hover {
+  text-decoration: underline;
+}
+
+.help-steps {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.help-steps li {
+  margin-bottom: var(--space-2);
 }

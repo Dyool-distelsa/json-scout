@@ -38,6 +38,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        // Opens the Help panel links in the system browser (scoped to the repo).
+        .plugin(tauri_plugin_opener::init())
         // Closing the main window MUST end the process. The single-instance
         // plugin owns a hidden helper window that can keep the event loop
         // alive after the real window is gone, leaving an orphaned process.

@@ -6,6 +6,7 @@ import { createSidebar } from './ui/sidebar.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
+import { createHelpPanel } from './ui/helpPanel.js';
 import { createVaultPanel } from './ui/vaultPanel.js';
 import { installCloseGuard } from './ui/closeGuard.js';
 import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
@@ -102,6 +103,10 @@ const rightPanel = initRightPanel({
 });
 
 createSettingsPanel(document.getElementById('panel-settings'), (msg, kind) => toast.showToast(msg, kind));
+createHelpPanel(document.getElementById('panel-help'), {
+  isTauri: isTauriRuntime(),
+  notify: (msg, kind) => toast.showToast(msg, kind),
+});
 
 const vaultPanel = createVaultPanel(document.getElementById('sidebar-vault'), {
   invoke: tauriInvoke,

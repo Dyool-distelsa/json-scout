@@ -20,6 +20,7 @@ import { el, button } from './dom.js';
 import { openPushDialog } from './vaultPushDialog.js';
 import { pushSuccessMessage } from './vaultPush.js';
 import { readBuildInfo } from './buildTag.js';
+import { closeDecision, askDiscardOnClose } from './closeGuard.js';
 
 const RECENT_STORAGE_KEY = 'json-scout.vault.recent';
 const INVALID_NAME_MESSAGE =
@@ -65,14 +66,17 @@ function writeRecentVaults(list) {
  *   openFile: (path: string) => Promise<boolean|void>,
  *   notify: (message: string, kind?: 'success'|'error'|'info') => void,
  *   isTauri: boolean,
+ *   onCleared?: () => void,
  * }} deps
+ *   `onCleared` runs after Clear removed the pulled files, so editors showing
+ *   them can be closed.
  * @returns {{
  *   activate: () => void,
  *   deactivate: () => void,
  *   refreshLocalStates: () => Promise<void>,
  * }}
  */
-export function createVaultPanel(container, { invoke, openFile, notify, isTauri }) {
+export function createVaultPanel(container, { invoke, openFile, notify, isTauri, onCleared }) {
   container.innerHTML = '';
   const root = el('div', 'vault-panel');
   container.appendChild(root);
@@ -91,7 +95,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     vault: null, // vault the current list belongs to (not the input's live value)
     items: [],
     query: '',
-    busy: null, // null | { kind: 'load' } | { kind: 'pull'|'push-preview'|'push', name }
+    busy: null, // null | { kind: 'load'|'clear' } | { kind: 'pull'|'push-preview'|'push', name }
     itemsGen: 0, // bumped whenever the listed rows change, so a stale disk read is dropped
     confirmName: null,
     recent: readRecentVaults(),
@@ -121,7 +125,9 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   nameInput.spellcheck = false;
   const loadButton = el('button', 'primary vault-load', 'Load');
   loadButton.type = 'submit';
-  form.append(nameInput, loadButton);
+  const clearButton = button('Clear', 'vault-btn vault-clear', () => clear());
+  clearButton.title = 'Clear the loaded vault and delete the pulled secret files';
+  form.append(nameInput, loadButton, clearButton);
 
   const chips = el('div', 'vault-chips');
   chips.setAttribute('aria-label', 'Recent vaults');
@@ -253,6 +259,8 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
     const busy = state.busy !== null;
     loadButton.disabled = busy;
     loadButton.textContent = state.busy?.kind === 'load' ? 'Loading…' : 'Load';
+    clearButton.disabled = busy;
+    clearButton.textContent = state.busy?.kind === 'clear' ? 'Clearing…' : 'Clear';
     root.setAttribute('aria-busy', busy ? 'true' : 'false');
     renderChips();
   }
@@ -318,7 +326,10 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
   function renderList() {
     const listed = state.vault !== null && isReady();
     listSection.hidden = !listed;
-    if (!listed) return;
+    if (!listed) {
+      if (state.vault === null) listEl.replaceChildren();
+      return;
+    }
     renderIdentity();
     const matches = filterSecrets(state.items, state.query);
     rowFocusTargets = new Map();
@@ -492,6 +503,47 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri 
         state.items = [];
         state.confirmName = null;
       }
+      handleCallError(err);
+    } finally {
+      state.busy = null;
+      render();
+    }
+  }
+
+  /**
+   * Forget the loaded vault and delete every pulled secret file. Unpushed
+   * edits are listed and must be confirmed first; a failed check asks too.
+   */
+  async function clear() {
+    if (state.busy || !isReady()) return;
+    state.busy = { kind: 'clear' };
+    setMessage(null);
+    render();
+    try {
+      let changes;
+      try {
+        changes = await invoke('vault_local_changes');
+      } catch (err) {
+        changes = err;
+      }
+      const decision = closeDecision(changes, { verb: 'Clear' });
+      if (decision.action === 'ask') {
+        const confirmed = await askDiscardOnClose(decision, {
+          title: 'Clear pulled secrets',
+          confirmLabel: 'Discard and clear',
+        });
+        if (!confirmed) return;
+      }
+      await invoke('vault_clean', { vault: null });
+      state.vault = null;
+      state.items = [];
+      state.itemsGen += 1;
+      state.confirmName = null;
+      state.query = '';
+      nameInput.value = '';
+      searchInput.value = '';
+      onCleared?.();
+    } catch (err) {
       handleCallError(err);
     } finally {
       state.busy = null;

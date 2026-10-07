@@ -68,4 +68,28 @@ describe('closeDecision', () => {
   it('treats a list of only malformed entries as a failed check, not as nothing to lose', () => {
     expect(closeDecision([null, {}, 'x']).message).toContain('Could not check');
   });
+
+  it('asks about unsaved files even when no secret has unpushed edits', () => {
+    const decision = closeDecision([], { unsavedFiles: ['a.json'] });
+    expect(decision.action).toBe('ask');
+    expect(decision.message).toBe('1 file has unsaved changes. Close and discard them?');
+    expect(decision.entries).toEqual(['a.json']);
+  });
+
+  it('lists secrets before unsaved files and joins both subjects', () => {
+    const decision = closeDecision([change('kv', 'cfg')], { unsavedFiles: ['a.json', 'b.json'] });
+    expect(decision.message).toBe(
+      '1 secret has unpushed edits and 2 files have unsaved changes. Close and discard them?'
+    );
+    expect(decision.entries).toEqual(['kv/cfg', 'a.json', 'b.json']);
+  });
+
+  it('words the question with the given verb', () => {
+    expect(closeDecision([change('kv', 'cfg')], { verb: 'Clear' }).message).toBe(
+      '1 secret has unpushed edits. Clear and discard them?'
+    );
+    expect(closeDecision(new Error('x'), { verb: 'Clear' }).message).toBe(
+      'Could not check for unpushed edits. Clear and discard any you may have?'
+    );
+  });
 });

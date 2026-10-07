@@ -106,3 +106,13 @@ describe('shouldFireShortcut', () => {
     expect(shouldFireShortcut(ev('z', { ctrlKey: true }))).toBeNull();
   });
 });
+
+describe('document tab shortcuts', () => {
+  it('maps New, Close Tab and tab cycling', () => {
+    expect(matchShortcut({ key: 'n', ctrlKey: true })).toBe('new');
+    expect(matchShortcut({ key: 'w', ctrlKey: true })).toBe('closeTab');
+    expect(matchShortcut({ key: 'Tab', ctrlKey: true })).toBe('nextTab');
+    expect(matchShortcut({ key: 'Tab', ctrlKey: true, shiftKey: true })).toBe('prevTab');
+    expect(formatShortcut('prevTab', false)).toBe('Ctrl+Shift+Tab');
+  });
+});

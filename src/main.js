@@ -8,6 +8,9 @@ import { initDragAndDrop } from './ui/dragdrop.js';
 import { createSettingsPanel } from './ui/settings.js';
 import { createVaultPanel } from './ui/vaultPanel.js';
 import { installCloseGuard } from './ui/closeGuard.js';
+import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
+import { createDocuments } from './ui/documents.js';
+import { createTauriDraftStore, createLocalDraftStore } from './ui/drafts.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
 import { flashEditor } from './ui/feedback.js';
@@ -68,6 +71,22 @@ const editor = createEditor(document.getElementById('editor'), {
 
 let secondaryEditor = null;
 
+// Open documents: one tab per file or Untitled draft. Untitled text is kept
+// in a recoverable draft (app data folder) until it is saved somewhere.
+const docs = createDocuments({
+  editor,
+  strip: createTabStrip(document.getElementById('doc-tabs'), {
+    onActivate: (id) => docs.activate(id),
+    onClose: (id) => docs.requestClose(id),
+    onNew: () => docs.newUntitled(),
+  }),
+  drafts: isTauriRuntime() ? createTauriDraftStore(tauriInvoke) : createLocalDraftStore(pluginStorage()),
+  askSave: (tab) => askSaveChanges(tab.title),
+  saveActive: () => saveActiveDocument(),
+  onActiveChange: onActiveDocumentChange,
+  onError: (message) => toast.showToast(message, 'error'),
+});
+
 const rightPanel = initRightPanel({
   tabsEl: document.getElementById('right-panel-tabs'),
   panelsEl: document.getElementById('right-panel-panels'),
@@ -86,9 +105,15 @@ createSettingsPanel(document.getElementById('panel-settings'), (msg, kind) => to
 
 const vaultPanel = createVaultPanel(document.getElementById('sidebar-vault'), {
   invoke: tauriInvoke,
-  openFile: loadFileFromDisk,
+  // A pull the user asked for always shows the pulled text, even over edits
+  // in an open tab (pulling over local edits is confirmed by the panel).
+  openFile: (path) => loadFileFromDisk(path, { fromVault: true, replace: true }),
   notify: (msg, kind) => toast.showToast(msg, kind),
   isTauri: isTauriRuntime(),
+  // The pulled files are gone: close the tabs that showed them.
+  onCleared: () => {
+    for (const tab of docs.tabs().filter((t) => t.fromVault)) docs.forceClose(tab.id);
+  },
 });
 
 // Closing discards the pulled workspace, so ask first when a secret has
@@ -98,8 +123,14 @@ if (isTauriRuntime()) {
     invoke: tauriInvoke,
     getWindow: async () => (await import('@tauri-apps/api/window')).getCurrentWindow(),
     notify: (msg, kind) => toast.showToast(msg, kind),
+    // Untitled drafts are kept, not lost; only edited files are asked about.
+    getUnsavedFiles: () => docs.unsavedFiles(),
+    beforeClose: () => docs.flushDrafts(),
   });
 }
+window.addEventListener('beforeunload', () => {
+  docs.flushDrafts();
+});
 
 const sidebar = createSidebar(document.getElementById('sidebar-list'), async (name) => {
   if (!state.currentDir) return;
@@ -122,9 +153,9 @@ async function tauriInvoke(command, args) {
  * write to.
  * @param {string|null} path
  */
-function updateFileName(path) {
-  const name = deriveDisplayFileName(path);
-  document.title = path ? `${name} — JSON Scout` : 'JSON Scout — Untitled';
+function updateFileName(path, untitledTitle = 'Untitled') {
+  const name = path ? deriveDisplayFileName(path) : untitledTitle;
+  document.title = path ? `${name} — JSON Scout` : `JSON Scout — ${untitledTitle}`;
   statusBar.setFileName(name);
 }
 
@@ -196,7 +227,22 @@ function handlePaste(text) {
   return result.text;
 }
 
+/**
+ * Another document is shown (or the shown one was renamed by a save):
+ * follow it in the title, status bar, sidebar and derived panels.
+ * @param {import('./ui/tabs.js').Tab|null} tab
+ */
+function onActiveDocumentChange(tab) {
+  state.currentPath = tab?.path ?? null;
+  updateFileName(state.currentPath, tab?.title);
+  if (state.currentPath) sidebar.setActive(state.currentPath.split(/[\\/]/).pop());
+  const cursor = editor.getCursorPosition();
+  statusBar.setCursor(cursor.line, cursor.column);
+  computeDerivedState();
+}
+
 function onEditorChange() {
+  docs.markEdited();
   // Cursor tracking is cheap and users notice lag here immediately, so
   // it stays outside the debounce — only the expensive validate/stats/
   // tree/parse-time work below is throttled.
@@ -377,61 +423,68 @@ const handlers = {
     editor.setTheme(next);
     secondaryEditor?.setTheme(next);
   },
-  save: async () => {
-    const text = editor.getContent();
-    if (state.currentPath) {
-      try {
-        await tauriInvoke('write_json_file', { path: state.currentPath, contents: text });
-        toast.showToast('Saved.', 'success');
-        vaultPanel.refreshLocalStates();
-      } catch (err) {
-        toast.showToast(`Save failed: ${err}`, 'error');
-      }
-      return;
-    }
-    if (isTauriRuntime()) {
-      await saveAsNative(text);
-      return;
-    }
-    // Degraded browser-only fallback (e.g. `vite dev` opened in a plain
-    // tab): there is no real save target, so make a downloaded copy and
-    // say so explicitly rather than silently pretending this saved.
-    downloadAsFile(text, 'untitled.json');
-    toast.showToast('Tauri unavailable — downloaded a copy instead of saving in place.', 'info');
-  },
+  save: () => saveActiveDocument(),
   open: () => (isTauriRuntime() ? openFileNative() : openFileFallback()),
-  saveAs: async () => {
-    const text = editor.getContent();
-    if (isTauriRuntime()) {
-      await saveAsNative(text);
-      return;
-    }
-    downloadAsFile(text, 'untitled.json');
-    toast.showToast('Tauri unavailable — downloaded a copy instead of saving in place.', 'info');
-  },
+  saveAs: () => saveActiveDocument({ askPath: true }),
+  new: () => docs.newUntitled(),
+  closeTab: () => docs.requestClose(),
+  nextTab: () => docs.cycle(1),
+  prevTab: () => docs.cycle(-1),
 };
 
 /**
+ * Save the active document: in place when it is a file, otherwise (or with
+ * `askPath`) through the native Save As dialog. An Untitled document that is
+ * saved stops being a draft.
+ * @param {{ askPath?: boolean }} [options]
+ * @returns {Promise<boolean>} whether it was saved
+ */
+async function saveActiveDocument({ askPath = false } = {}) {
+  const text = editor.getContent();
+  if (state.currentPath && !askPath) {
+    try {
+      await tauriInvoke('write_json_file', { path: state.currentPath, contents: text });
+      docs.markSaved(state.currentPath);
+      toast.showToast('Saved.', 'success');
+      vaultPanel.refreshLocalStates();
+      return true;
+    } catch (err) {
+      toast.showToast(`Save failed: ${err}`, 'error');
+      return false;
+    }
+  }
+  if (isTauriRuntime()) return saveAsNative(text);
+  // Degraded browser-only fallback (e.g. `vite dev` opened in a plain
+  // tab): there is no real save target, so make a downloaded copy and
+  // say so explicitly rather than silently pretending this saved.
+  downloadAsFile(text, 'untitled.json');
+  toast.showToast('Tauri unavailable — downloaded a copy instead of saving in place.', 'info');
+  return false;
+}
+
+/**
  * Ask the user for a destination path via the native Save As dialog,
- * write to it, and adopt it as the current file on success. Silently
- * does nothing if the user cancels the dialog.
+ * write to it, and adopt it as the active tab's file on success.
+ * Resolves false (without a message) if the user cancels the dialog.
  * @param {string} text
+ * @returns {Promise<boolean>}
  */
 async function saveAsNative(text) {
   try {
     const { save } = await import('@tauri-apps/plugin-dialog');
     const path = await save({
-      defaultPath: 'untitled.json',
+      defaultPath: state.currentPath ?? 'untitled.json',
       filters: [{ name: 'JSON', extensions: ['json'] }],
     });
-    if (!path) return;
+    if (!path) return false;
     await tauriInvoke('write_json_file', { path, contents: text });
-    state.currentPath = path;
-    updateFileName(path);
+    docs.markSaved(path);
     toast.showToast('Saved.', 'success');
     vaultPanel.refreshLocalStates();
+    return true;
   } catch (err) {
     toast.showToast(`Save failed: ${err}`, 'error');
+    return false;
   }
 }
 
@@ -480,9 +533,7 @@ function openFileFallback() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      setEditorContentAndFlush(String(reader.result ?? ''));
-      state.currentPath = null;
-      updateFileName(null);
+      docs.newUntitled(String(reader.result ?? ''));
       toast.dismissToastsByVariant('error');
     };
     reader.readAsText(file);
@@ -491,17 +542,16 @@ function openFileFallback() {
 }
 
 /**
+ * Open a file in its own tab (or the tab already showing it).
  * @param {string} path
+ * @param {{ fromVault?: boolean, replace?: boolean }} [options] see `docs.openFile`
  * @returns {Promise<boolean>} whether the file was opened (a failure has
  *   already surfaced its own error toast).
  */
-async function loadFileFromDisk(path) {
+async function loadFileFromDisk(path, options = {}) {
   try {
     const contents = await tauriInvoke('read_json_file', { path });
-    setEditorContentAndFlush(contents);
-    state.currentPath = path;
-    updateFileName(path);
-    sidebar.setActive(path.split(/[\\/]/).pop());
+    docs.openFile(path, contents, options);
     toast.dismissToastsByVariant('error');
     return true;
   } catch (err) {
@@ -699,9 +749,7 @@ initDragAndDrop(dropzoneOverlay, (path, contents) => {
   if (path) {
     loadFileFromDisk(path);
   } else if (contents !== null) {
-    setEditorContentAndFlush(contents);
-    state.currentPath = null;
-    updateFileName(null);
+    docs.newUntitled(contents);
     toast.dismissToastsByVariant('error');
   }
 });
@@ -733,7 +781,12 @@ async function handleStartupPayload(payload) {
   }
 }
 
+docs.newUntitled();
+
 (async () => {
+  // Bring back the Untitled documents of the last run before any file from
+  // the command line opens, so they keep their order.
+  await docs.restore();
   try {
     const { listen } = await import('@tauri-apps/api/event');
     await listen('startup-payload', (event) => handleStartupPayload(event.payload));

@@ -1033,10 +1033,103 @@ body.is-resizing .right-panel {
 }
 
 .editor-pane__primary {
-  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+}
+
+.editor-pane__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Open documents strip above the primary editor. */
+.doc-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  min-width: 0;
+  background: var(--color-bg-alt);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.doc-tabs__list {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.doc-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 220px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  height: 30px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  color: var(--color-text-dim);
+  border-right: 1px solid var(--color-border);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.doc-tab:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.doc-tab--active {
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+.doc-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.doc-tab__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-tab__dirty {
+  color: var(--color-accent-text);
+  font-size: 9px;
+}
+
+.doc-tab__close,
+.doc-tabs__new {
+  background: none;
+  border: none;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  line-height: 1;
+}
+
+.doc-tab__close {
+  padding: 2px 4px;
+  font-size: 14px;
+}
+
+.doc-tabs__new {
+  flex: none;
+  padding: 0 var(--space-3);
+  font-size: 16px;
+}
+
+.doc-tab__close:hover,
+.doc-tabs__new:hover {
+  color: var(--color-text);
+  background: var(--color-bg-active);
 }
 
 /* Copy button: overlay in the top-right corner of the primary editor. The
@@ -1784,6 +1877,10 @@ button.danger:hover {
 .vault-panel__form {
   display: flex;
   gap: 6px;
+}
+
+.vault-clear {
+  padding: 2px 10px;
 }
 
 .vault-input {

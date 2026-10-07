@@ -1,4 +1,5 @@
 mod cli;
+mod drafts;
 mod fs_ops;
 mod shell_integration;
 mod vault;
@@ -65,6 +66,9 @@ pub fn run() {
             fs_ops::read_json_file,
             fs_ops::write_json_file,
             fs_ops::scan_dir_for_json,
+            drafts::drafts_list,
+            drafts::draft_save,
+            drafts::draft_delete,
             shell_integration::install_context_menu,
             shell_integration::uninstall_context_menu,
             shell_integration::is_context_menu_installed,

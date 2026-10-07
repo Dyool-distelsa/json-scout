@@ -189,8 +189,10 @@ export function createEditor(parent, options = {}) {
     },
   });
 
-  const state = EditorState.create({
-    doc,
+  let currentTheme = theme;
+  let currentReadOnly = readOnly;
+  const buildState = (text) => EditorState.create({
+    doc: text,
     extensions: [
       lineNumbers(),
       highlightActiveLineGutter(),
@@ -206,15 +208,15 @@ export function createEditor(parent, options = {}) {
       linter(jsonLintSource),
       json(),
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
-      themeCompartment.of(theme === 'light' ? lightPalette : darkPalette),
-      readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
+      themeCompartment.of(currentTheme === 'light' ? lightPalette : darkPalette),
+      readOnlyCompartment.of(EditorState.readOnly.of(currentReadOnly)),
       updateListener,
       pasteHandler,
       EditorView.lineWrapping,
     ],
   });
 
-  const view = new EditorView({ state, parent });
+  const view = new EditorView({ state: buildState(doc), parent });
 
   return {
     view,
@@ -224,12 +226,35 @@ export function createEditor(parent, options = {}) {
         changes: { from: 0, to: view.state.doc.length, insert: text },
       });
     },
+    /**
+     * A fresh, independent document state (own undo history and selection)
+     * for another open document. Shown with `setState`.
+     * @param {string} text
+     */
+    createState: (text) => buildState(text),
+    /** The shown document's whole state, to stash while another is shown. */
+    getState: () => view.state,
+    /**
+     * Show a state from `createState`/`getState`. Does not fire `onChange`.
+     * The theme and read-only setting follow the editor, not the state.
+     */
+    setState: (nextState) => {
+      view.setState(nextState);
+      view.dispatch({
+        effects: [
+          themeCompartment.reconfigure(currentTheme === 'light' ? lightPalette : darkPalette),
+          readOnlyCompartment.reconfigure(EditorState.readOnly.of(currentReadOnly)),
+        ],
+      });
+    },
     setTheme: (nextTheme) => {
+      currentTheme = nextTheme;
       view.dispatch({
         effects: themeCompartment.reconfigure(nextTheme === 'light' ? lightPalette : darkPalette),
       });
     },
     setReadOnly: (value) => {
+      currentReadOnly = value;
       view.dispatch({ effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(value)) });
     },
     getCursorPosition: () => {

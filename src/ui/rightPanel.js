@@ -294,7 +294,7 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
       const input = document.createElement('input');
       input.className = 'query-input';
       input.type = 'text';
-      input.placeholder = 'JSONPath, e.g. $.store.book[*].author';
+      input.placeholder = 'JSONPath ($..author, $..[?(@.a.b==1)]) or a key name';
       const results = document.createElement('div');
       results.className = 'query-results';
       const run = () => {

@@ -53,4 +53,19 @@ describe('queryJson', () => {
     const results = queryJson(arr, '$[*].id');
     expect(results.map((r) => r.value)).toEqual([1, 2]);
   });
+
+  it('filters on nested properties under recursive descent, skipping nodes without them', () => {
+    const nested = { a: { b: [{ c: { d: 1 } }, { c: { d: 2, e: 'y' } }] }, other: 5 };
+    const results = queryJson(nested, '$..[?(@.c.d==2)]');
+    expect(results.map((r) => r.value)).toEqual([{ c: { d: 2, e: 'y' } }]);
+  });
+
+  it('treats a bare key as a search at any depth', () => {
+    const results = queryJson(data, 'author');
+    expect(results.map((r) => r.value)).toEqual(['Author A', 'Author B', 'Author C']);
+  });
+
+  it('treats a dotted bare key path as a search at any depth', () => {
+    expect(queryJson(data, 'bicycle.color').map((r) => r.value)).toEqual(['red']);
+  });
 });

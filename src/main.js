@@ -5,8 +5,7 @@ import { createStatusBar } from './ui/statusbar.js';
 import { createSidebar } from './ui/sidebar.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
-import { createSettingsPanel } from './ui/settings.js';
-import { createHelpPanel } from './ui/helpPanel.js';
+import { openSettingsDialog, openHelpDialog } from './ui/appDialogs.js';
 import { createVaultPanel } from './ui/vaultPanel.js';
 import { installCloseGuard } from './ui/closeGuard.js';
 import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
@@ -170,11 +169,6 @@ const rightPanel = initRightPanel({
   onNotify: (msg, kind) => toast.showToast(msg, kind),
 });
 
-createSettingsPanel(document.getElementById('panel-settings'), (msg, kind) => toast.showToast(msg, kind));
-createHelpPanel(document.getElementById('panel-help'), {
-  isTauri: isTauriRuntime(),
-  notify: (msg, kind) => toast.showToast(msg, kind),
-});
 
 const vaultPanel = createVaultPanel(document.getElementById('sidebar-vault'), {
   invoke: tauriInvoke,
@@ -494,6 +488,9 @@ const handlers = {
   save: () => saveActiveDocument(),
   open: () => (isTauriRuntime() ? openFileNative() : openFileFallback()),
   saveAs: () => saveActiveDocument({ askPath: true }),
+  settings: () => openSettingsDialog((msg, kind) => toast.showToast(msg, kind)),
+  help: () =>
+    openHelpDialog({ isTauri: isTauriRuntime(), notify: (msg, kind) => toast.showToast(msg, kind) }),
   new: () => docs.newUntitled(),
   closeTab: () => docs.requestClose(),
   nextTab: () => docs.cycle(1),

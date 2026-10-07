@@ -10,7 +10,8 @@ import { openModal } from './modal.js';
  *   onClose: (id: string) => void,
  *   onNew: () => void,
  * }} handlers
- * @returns {{ render: (state: import('./tabs.js').TabsState) => void }}
+ * @returns {{ render: (state: import('./tabs.js').TabsState, compareId?: string|null) => void }}
+ *   `compareId` marks the tab shown in the compare pane (Diff mode).
  */
 export function createTabStrip(container, { onActivate, onClose, onNew }) {
   container.replaceChildren();
@@ -33,7 +34,7 @@ export function createTabStrip(container, { onActivate, onClose, onNew }) {
     list.querySelector(`[data-id="${next.dataset.id}"]`)?.focus();
   });
 
-  function render(state) {
+  function render(state, compareId = null) {
     list.replaceChildren(
       ...state.tabs.map((tab) => {
         const selected = tab.id === state.activeId;
@@ -42,8 +43,10 @@ export function createTabStrip(container, { onActivate, onClose, onNew }) {
         node.setAttribute('role', 'tab');
         node.setAttribute('aria-selected', String(selected));
         node.tabIndex = selected ? 0 : -1;
-        node.title = tab.path ?? `${tab.title} (not saved yet)`;
+        const compared = tab.id === compareId;
+        node.title = `${tab.path ?? `${tab.title} (not saved yet)`}${compared ? ' — shown in the compare pane' : ''}`;
         node.classList.toggle('doc-tab--active', selected);
+        node.classList.toggle('doc-tab--compare', compared);
         node.classList.toggle('doc-tab--dirty', tab.dirty);
         const label = el('span', 'doc-tab__title', tab.title);
         const dot = el('span', 'doc-tab__dirty', '●');
@@ -55,7 +58,13 @@ export function createTabStrip(container, { onActivate, onClose, onNew }) {
         });
         close.tabIndex = -1;
         close.setAttribute('aria-label', `Close ${tab.title}`);
-        node.append(label, dot, close);
+        if (compared) {
+          const badge = el('span', 'doc-tab__compare', 'diff');
+          badge.setAttribute('aria-label', 'compared');
+          node.append(label, badge, dot, close);
+        } else {
+          node.append(label, dot, close);
+        }
         node.addEventListener('click', () => onActivate(tab.id));
         node.addEventListener('auxclick', (event) => {
           if (event.button === 1) {

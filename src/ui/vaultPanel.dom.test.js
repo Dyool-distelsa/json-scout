@@ -379,3 +379,68 @@ describe('vault panel: the openFile contract', () => {
     expect(container.querySelector('.vault-badge--clean')).not.toBeNull();
   });
 });
+
+describe('vault panel: clear', () => {
+  it('clears the list and deletes the pulled files when nothing is unpushed', async () => {
+    const ctx = setup({ items: [item('cfg', 'clean')] });
+    const onCleared = vi.fn();
+    container.replaceChildren();
+    const panel = createVaultPanel(container, {
+      invoke: ctx.fake.invoke,
+      openFile: ctx.openFile,
+      notify: ctx.notify,
+      isTauri: true,
+      onCleared,
+    });
+    ctx.fake.on('vault_local_changes', []);
+    ctx.fake.on('vault_clean', undefined);
+    await openVault({ fake: ctx.fake, panel });
+    expect(pullButton('cfg')).not.toBeNull();
+
+    buttonByText('Clear').click();
+    await settle();
+
+    expect(ctx.fake.callsOf('vault_clean')).toEqual([
+      { command: 'vault_clean', args: { vault: null } },
+    ]);
+    expect(pullButton('cfg')).toBeNull();
+    expect(container.querySelector('.vault-input').value).toBe('');
+    expect(onCleared).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks before discarding unpushed edits and keeps everything on cancel', async () => {
+    const ctx = setup({ items: [item('cfg', 'modified')] });
+    ctx.fake.on('vault_local_changes', [{ vault: 'kv-dev', name: 'cfg' }]);
+    ctx.fake.on('vault_clean', undefined);
+    await openVault(ctx);
+
+    buttonByText('Clear').click();
+    await settle();
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog.textContent).toContain('1 secret has unpushed edits. Clear and discard them?');
+    expect(dialog.textContent).toContain('kv-dev/cfg');
+    [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Keep editing').click();
+    await settle();
+
+    expect(ctx.fake.callsOf('vault_clean')).toHaveLength(0);
+    expect(pullButton('cfg')).not.toBeNull();
+  });
+
+  it('clears after the user confirms discarding unpushed edits', async () => {
+    const ctx = setup({ items: [item('cfg', 'modified')] });
+    ctx.fake.on('vault_local_changes', [{ vault: 'kv-dev', name: 'cfg' }]);
+    ctx.fake.on('vault_clean', undefined);
+    await openVault(ctx);
+
+    buttonByText('Clear').click();
+    await settle();
+    [...document.querySelectorAll('[role="dialog"] button')]
+      .find((b) => b.textContent === 'Discard and clear')
+      .click();
+    await settle();
+
+    expect(ctx.fake.callsOf('vault_clean')).toHaveLength(1);
+    expect(pullButton('cfg')).toBeNull();
+  });
+});

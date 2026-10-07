@@ -20,11 +20,14 @@ export const MAX_LISTED = 50;
  */
 export const CHECK_TIMEOUT_MS = 3000;
 
-const CHECK_FAILED_MESSAGE =
-  'Could not check for unpushed edits. Close and discard any you may have?';
-
-function failedCheck() {
-  return { action: 'ask', message: CHECK_FAILED_MESSAGE, entries: [], hidden: 0 };
+function failedCheck(verb, files) {
+  const listed = files.slice(0, MAX_LISTED);
+  return {
+    action: 'ask',
+    message: `Could not check for unpushed edits. ${verb} and discard any you may have?`,
+    entries: listed,
+    hidden: Math.max(0, files.length - listed.length),
+  };
 }
 
 /**
@@ -42,18 +45,26 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+function plural(count, one, many) {
+  return count === 1 ? `1 ${one}` : `${count} ${many}`;
+}
+
 /**
  * What to do with a close request, given what `vault_local_changes` returned
  * (a list) or why it failed (anything else). An empty list lets the window
  * close; anything that is not a list, or a list with nothing usable in it,
  * asks anyway, because not knowing is not the same as having nothing to lose.
+ * `unsavedFiles` names open files with edits that were never saved; they are
+ * listed after the secrets. `verb` words the question ("Close", "Clear").
  * @param {unknown} changesOrError
+ * @param {{ verb?: string, unsavedFiles?: string[] }} [options]
  * @returns {{ action: 'close' } | { action: 'ask', message: string, entries: string[], hidden: number }}
  */
-export function closeDecision(changesOrError) {
-  if (!Array.isArray(changesOrError)) return failedCheck();
-  if (changesOrError.length === 0) return { action: 'close' };
-  const all = changesOrError
+export function closeDecision(changesOrError, { verb = 'Close', unsavedFiles = [] } = {}) {
+  const files = unsavedFiles.filter((name) => typeof name === 'string' && name !== '');
+  if (!Array.isArray(changesOrError)) return failedCheck(verb, files);
+  if (changesOrError.length === 0 && files.length === 0) return { action: 'close' };
+  const secrets = changesOrError
     .filter(
       (entry) =>
         typeof entry?.vault === 'string' &&
@@ -62,12 +73,20 @@ export function closeDecision(changesOrError) {
         entry.name !== ''
     )
     .map((entry) => `${entry.vault}/${entry.name}`);
-  if (all.length === 0) return failedCheck();
-  const subject =
-    all.length === 1 ? '1 secret has unpushed edits' : `${all.length} secrets have unpushed edits`;
+  if (changesOrError.length > 0 && secrets.length === 0) return failedCheck(verb, files);
+  const subjects = [];
+  if (secrets.length > 0) {
+    subjects.push(
+      secrets.length === 1 ? '1 secret has unpushed edits' : `${secrets.length} secrets have unpushed edits`
+    );
+  }
+  if (files.length > 0) {
+    subjects.push(`${plural(files.length, 'file has', 'files have')} unsaved changes`);
+  }
+  const all = [...secrets, ...files];
   return {
     action: 'ask',
-    message: `${subject}. Close and discard them?`,
+    message: `${subjects.join(' and ')}. ${verb} and discard them?`,
     entries: all.slice(0, MAX_LISTED),
     hidden: Math.max(0, all.length - MAX_LISTED),
   };
@@ -77,9 +96,13 @@ export function closeDecision(changesOrError) {
  * Show the question and wait for the answer. "Keep editing" has the default
  * focus and is also what Escape means.
  * @param {{ message: string, entries: string[], hidden: number }} decision
+ * @param {{ title?: string, confirmLabel?: string }} [wording]
  * @returns {Promise<boolean>} true to discard and close
  */
-export function askDiscardOnClose(decision) {
+export function askDiscardOnClose(
+  decision,
+  { title = 'Unpushed edits', confirmLabel = 'Discard and close' } = {}
+) {
   return new Promise((resolve) => {
     let answered = false;
     const answer = (discard) => {
@@ -88,7 +111,7 @@ export function askDiscardOnClose(decision) {
       resolve(discard);
     };
     const modal = openModal({
-      title: 'Unpushed edits',
+      title,
       tone: 'caution',
       escapeCloses: () => true,
       onClose: () => answer(false),
@@ -102,7 +125,7 @@ export function askDiscardOnClose(decision) {
     if (decision.hidden > 0) {
       modal.body.appendChild(el('p', 'close-guard__more', `and ${decision.hidden} more.`));
     }
-    const discard = button('Discard and close', 'danger', () => {
+    const discard = button(confirmLabel, 'danger', () => {
       answer(true);
       modal.close();
     });
@@ -130,7 +153,12 @@ export function askDiscardOnClose(decision) {
  *   }>,
  *   notify?: (message: string, kind?: 'success'|'error'|'info') => void,
  *   checkTimeoutMs?: number,
+ *   getUnsavedFiles?: () => string[],
+ *   beforeClose?: () => Promise<void>,
  * }} deps
+ *   `getUnsavedFiles` names open files whose edits would be lost; they are
+ *   asked about together with the secrets. `beforeClose` runs first on every
+ *   request (e.g. to write pending drafts) and is bounded by the same timeout.
  * @returns {Promise<() => void>} removes the guard
  */
 export async function installCloseGuard({
@@ -138,6 +166,8 @@ export async function installCloseGuard({
   getWindow,
   notify,
   checkTimeoutMs = CHECK_TIMEOUT_MS,
+  getUnsavedFiles = () => [],
+  beforeClose,
 }) {
   let prompting = false;
   try {
@@ -150,13 +180,26 @@ export async function installCloseGuard({
       }
       prompting = true;
       try {
+        if (beforeClose) {
+          try {
+            await withTimeout(beforeClose(), checkTimeoutMs);
+          } catch {
+            // Best effort: a failed flush must not trap the window.
+          }
+        }
         let outcome;
         try {
           outcome = await withTimeout(invoke('vault_local_changes'), checkTimeoutMs);
         } catch (err) {
           outcome = err;
         }
-        const decision = closeDecision(outcome);
+        let unsavedFiles = [];
+        try {
+          unsavedFiles = getUnsavedFiles();
+        } catch {
+          unsavedFiles = [];
+        }
+        const decision = closeDecision(outcome, { unsavedFiles });
         if (decision.action === 'close') return;
         const discard = await askDiscardOnClose(decision);
         // Hold the close ourselves, so that the window API does not destroy

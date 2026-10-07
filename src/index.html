@@ -43,6 +43,27 @@
             </div>
           </div>
           <div class="editor-pane__diff-container" id="diff-secondary-container" hidden>
+            <div class="compare-bar">
+              <span class="compare-bar__label">Compare with</span>
+              <button
+                id="compare-pick"
+                class="compare-bar__pick"
+                type="button"
+                aria-haspopup="menu"
+                title="Choose what to compare with"
+              >
+                <span id="compare-pick-label"></span><span aria-hidden="true"> ▾</span>
+              </button>
+              <button
+                id="compare-close"
+                class="compare-bar__close"
+                type="button"
+                title="Close compare"
+                aria-label="Close compare"
+              >
+                ×
+              </button>
+            </div>
             <div id="editor-secondary" class="editor"></div>
           </div>
         </section>

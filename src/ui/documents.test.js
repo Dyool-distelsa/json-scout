@@ -39,6 +39,19 @@ function setup({ drafts = memoryDrafts(), askSave = vi.fn(async () => 'discard')
   let n = 0;
   const strip = { render: vi.fn() };
   const onActiveChange = vi.fn();
+  const onCompareChange = vi.fn();
+  // A second editor double for the compare pane, sharing state shapes.
+  let compared = { text: '' };
+  const compareEditor = {
+    getState: () => editor.wrap(compared),
+    setState: (next) => {
+      compared = next;
+    },
+    getContent: () => compared.text,
+    type(text) {
+      compared.text = text;
+    },
+  };
   const docs = createDocuments({
     editor,
     strip,
@@ -46,10 +59,12 @@ function setup({ drafts = memoryDrafts(), askSave = vi.fn(async () => 'discard')
     askSave,
     saveActive: saveActive ?? vi.fn(async () => true),
     onActiveChange,
+    compareEditor,
+    onCompareChange,
     newId: () => `id-${(n += 1)}`,
     draftDelayMs: 10,
   });
-  return { docs, editor, drafts, askSave, onActiveChange, strip };
+  return { docs, editor, compareEditor, drafts, askSave, onActiveChange, onCompareChange, strip };
 }
 
 const titles = (docs) => docs.tabs().map((t) => t.title);
@@ -179,5 +194,95 @@ describe('documents', () => {
     docs.forceClose(id);
     expect(askSave).not.toHaveBeenCalled();
     expect(titles(docs)).toEqual(['Untitled 1']);
+  });
+
+  describe('compare (Diff mode)', () => {
+    it('shows another tab in the compare editor without changing the active one', () => {
+      const { docs, editor, compareEditor, onCompareChange } = setup();
+      const left = docs.newUntitled('left');
+      const right = docs.newUntitled('right');
+      docs.activate(left);
+      docs.setCompare(right);
+      expect(docs.active().id).toBe(left);
+      expect(docs.compared().id).toBe(right);
+      expect(editor.getContent()).toBe('left');
+      expect(compareEditor.getContent()).toBe('right');
+      expect(onCompareChange).toHaveBeenLastCalledWith(expect.objectContaining({ id: right }));
+    });
+
+    it('opens a new Untitled tab straight into the compare pane', () => {
+      const { docs, editor, compareEditor } = setup();
+      docs.openFile('/x/a.json', 'file');
+      docs.newUntitled('', { compare: true });
+      expect(docs.active().title).toBe('a.json');
+      expect(docs.compared().title).toBe('Untitled 1');
+      expect(editor.getContent()).toBe('file');
+      expect(compareEditor.getContent()).toBe('');
+    });
+
+    it('opens a file into the compare pane, but not the active file itself', () => {
+      const { docs, compareEditor } = setup();
+      docs.openFile('/x/a.json', 'a');
+      expect(docs.openFile('/x/b.json', 'b', { compare: true })).toBe(true);
+      expect(compareEditor.getContent()).toBe('b');
+      expect(docs.active().title).toBe('a.json');
+      expect(docs.openFile('/x/a.json', 'a', { compare: true })).toBe(false);
+    });
+
+    it('marks edits in the compare pane on the compared tab and keeps its text', async () => {
+      const { docs, compareEditor, drafts } = setup();
+      docs.newUntitled('main');
+      const id = docs.newUntitled('', { compare: true });
+      compareEditor.type('typed');
+      docs.markEdited({ compare: true });
+      await vi.advanceTimersByTimeAsync(20);
+      expect(docs.compared().dirty).toBe(true);
+      expect(docs.active().dirty).toBe(true);
+      expect(drafts.map.get(id)).toBe('typed');
+    });
+
+    it('swaps the panes when the compared tab is activated', () => {
+      const { docs, editor, compareEditor } = setup();
+      const left = docs.newUntitled('left');
+      const right = docs.newUntitled('right');
+      docs.activate(left);
+      docs.setCompare(right);
+      docs.activate(right);
+      expect(editor.getContent()).toBe('right');
+      expect(compareEditor.getContent()).toBe('left');
+      expect(docs.compared().id).toBe(left);
+    });
+
+    it('keeps a tab’s text when it leaves the compare pane', () => {
+      const { docs, editor, compareEditor } = setup();
+      const left = docs.newUntitled('left');
+      const right = docs.newUntitled('right');
+      docs.activate(left);
+      docs.setCompare(right);
+      compareEditor.type('right edited');
+      docs.setCompare(null);
+      expect(docs.compared()).toBeNull();
+      docs.activate(right);
+      expect(editor.getContent()).toBe('right edited');
+    });
+
+    it('leaves Diff mode when the compared tab is closed', () => {
+      const { docs, onCompareChange } = setup();
+      docs.newUntitled('left');
+      const right = docs.newUntitled('', { compare: true });
+      docs.forceClose(right);
+      expect(docs.compared()).toBeNull();
+      expect(onCompareChange).toHaveBeenLastCalledWith(null);
+    });
+
+    it('moves the compared tab into the main editor when the active one closes next to it', () => {
+      const { docs, editor } = setup();
+      const left = docs.newUntitled('left');
+      docs.newUntitled('right', { compare: true });
+      docs.forceClose(left);
+      expect(editor.getContent()).toBe('right');
+      expect(docs.compared()).toBeNull();
+      expect(docs.tabs()).toHaveLength(1);
+    });
   });
 });

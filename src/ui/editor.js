@@ -143,6 +143,52 @@ function jsonLintSource(view) {
 }
 
 /**
+ * Callbacks of each editor view. The change and paste listeners below are
+ * part of every document state but look the callbacks up by the view showing
+ * the state, so a document can move between editors (a tab shown in the
+ * compare pane) and still report to the editor it is in.
+ * @type {WeakMap<EditorView, { onChange?: () => void, onPaste?: (text: string) => string | null }>}
+ */
+const viewCallbacks = new WeakMap();
+
+const updateListener = EditorView.updateListener.of((update) => {
+  // Deliberately does NOT pass the document text here: doing so would
+  // call `doc.toString()` (materializing the whole document as a JS
+  // string) on every single keystroke, even though `onChange` only
+  // needs to know *that* the document changed. Callers that need the
+  // text can call `getContent()` themselves, ideally from debounced
+  // work rather than on every change.
+  const onChange = viewCallbacks.get(update.view)?.onChange;
+  if (update.docChanged && typeof onChange === 'function') {
+    onChange();
+  }
+});
+
+const pasteHandler = EditorView.domEventHandlers({
+  paste(event, view) {
+    const onPaste = viewCallbacks.get(view)?.onPaste;
+    if (typeof onPaste !== 'function' || view.state.readOnly) return false;
+    const { ranges, main } = view.state.selection;
+    if (ranges.length !== 1 || !shouldProcessPaste(view.state.doc.length, main.from, main.to)) {
+      return false;
+    }
+    const pasted = event.clipboardData?.getData('text/plain') ?? '';
+    const replacement = onPaste(pasted);
+    if (replacement === null || replacement === undefined) return false;
+    event.preventDefault();
+    // A normal transaction: the update listener above fires `onChange`
+    // exactly as it does for typing, so lint/tree refresh is unchanged.
+    view.dispatch({
+      changes: { from: main.from, to: main.to, insert: replacement },
+      selection: { anchor: main.from + replacement.length },
+      scrollIntoView: true,
+      userEvent: 'input.paste',
+    });
+    return true;
+  },
+});
+
+/**
  * Create a CodeMirror 6 JSON editor.
  * @param {HTMLElement} parent
  * @param {{ doc?: string, theme?: 'dark'|'light', readOnly?: boolean, onChange?: () => void,
@@ -153,41 +199,6 @@ function jsonLintSource(view) {
  */
 export function createEditor(parent, options = {}) {
   const { doc = '', theme = 'dark', readOnly = false, onChange, onPaste } = options;
-
-  const updateListener = EditorView.updateListener.of((update) => {
-    // Deliberately does NOT pass the document text here: doing so would
-    // call `doc.toString()` (materializing the whole document as a JS
-    // string) on every single keystroke, even though `onChange` only
-    // needs to know *that* the document changed. Callers that need the
-    // text can call `getContent()` themselves, ideally from debounced
-    // work rather than on every change.
-    if (update.docChanged && typeof onChange === 'function') {
-      onChange();
-    }
-  });
-
-  const pasteHandler = EditorView.domEventHandlers({
-    paste(event, view) {
-      if (typeof onPaste !== 'function' || view.state.readOnly) return false;
-      const { ranges, main } = view.state.selection;
-      if (ranges.length !== 1 || !shouldProcessPaste(view.state.doc.length, main.from, main.to)) {
-        return false;
-      }
-      const pasted = event.clipboardData?.getData('text/plain') ?? '';
-      const replacement = onPaste(pasted);
-      if (replacement === null || replacement === undefined) return false;
-      event.preventDefault();
-      // A normal transaction: the update listener above fires `onChange`
-      // exactly as it does for typing, so lint/tree refresh is unchanged.
-      view.dispatch({
-        changes: { from: main.from, to: main.to, insert: replacement },
-        selection: { anchor: main.from + replacement.length },
-        scrollIntoView: true,
-        userEvent: 'input.paste',
-      });
-      return true;
-    },
-  });
 
   let currentTheme = theme;
   let currentReadOnly = readOnly;
@@ -217,6 +228,7 @@ export function createEditor(parent, options = {}) {
   });
 
   const view = new EditorView({ state: buildState(doc), parent });
+  viewCallbacks.set(view, { onChange, onPaste });
 
   return {
     view,

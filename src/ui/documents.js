@@ -18,7 +18,8 @@ export const DRAFT_DELAY_MS = 500;
 /**
  * The open documents: one editor view, one document state per tab (each keeps
  * its own undo history and selection), and Untitled text mirrored to the draft
- * store so it survives closing the app.
+ * store so it survives closing the app. In Diff mode a second tab is shown in
+ * the compare editor, beside the active one.
  *
  * @param {{
  *   editor: { createState: (text: string) => any, getState: () => any,
@@ -28,6 +29,8 @@ export const DRAFT_DELAY_MS = 500;
  *   askSave: (tab: import('./tabs.js').Tab) => Promise<'save'|'discard'|'cancel'>,
  *   saveActive: () => Promise<boolean>,
  *   onActiveChange: (tab: import('./tabs.js').Tab) => void,
+ *   compareEditor?: { getState: () => any, setState: (state: any) => void, getContent: () => string },
+ *   onCompareChange?: (tab: import('./tabs.js').Tab|null) => void,
  *   onError?: (message: string) => void,
  *   newId?: () => string,
  *   draftDelayMs?: number,
@@ -42,6 +45,8 @@ export function createDocuments({
   askSave,
   saveActive,
   onActiveChange,
+  compareEditor,
+  onCompareChange = () => {},
   onError,
   newId = () => newTabId(),
   draftDelayMs = DRAFT_DELAY_MS,
@@ -52,19 +57,53 @@ export function createDocuments({
   const pendingDrafts = new Set();
   let draftTimer = null;
   let draftErrorShown = false;
+  /** Tab shown in the compare editor (Diff mode), or null. */
+  let compareId = null;
 
   function render() {
-    strip.render(state);
+    strip.render(state, compareId);
   }
 
   function textOf(id) {
     if (id === state.activeId) return editor.getContent();
+    if (id === compareId) return compareEditor.getContent();
     return stashed.get(id)?.doc.toString() ?? '';
+  }
+
+  /**
+   * Show `id` in the compare editor (null leaves Diff mode). The tab that was
+   * there goes back to the stash; the active tab cannot be compared with itself.
+   */
+  function setCompare(id) {
+    if (id === compareId) return;
+    if (compareId !== null && findTab(state, compareId)) {
+      stashed.set(compareId, compareEditor.getState());
+    }
+    compareId = null;
+    if (id !== null && id !== state.activeId && stashed.has(id)) {
+      compareEditor.setState(stashed.get(id));
+      stashed.delete(id);
+      compareId = id;
+    }
+    render();
+    onCompareChange(compareId === null ? null : findTab(state, compareId));
   }
 
   /** Show `id` in the editor, stashing what was shown unless it is gone. */
   function show(id) {
     const previous = state.activeId;
+    if (id === compareId && previous !== null) {
+      // The compared tab becomes the active one: the two panes swap.
+      const shown = editor.getState();
+      editor.setState(compareEditor.getState());
+      compareEditor.setState(shown);
+      compareId = previous;
+      state = activate(state, id);
+      render();
+      onActiveChange(activeTab(state));
+      onCompareChange(findTab(state, compareId));
+      return;
+    }
     if (previous === id && !stashed.has(id)) {
       render();
       return;
@@ -92,10 +131,23 @@ export function createDocuments({
     if (!tab) return;
     if (tab.path === null) forgetDraft(id);
     const wasActive = state.activeId === id;
+    if (id === compareId) {
+      compareId = null;
+      onCompareChange(null);
+    }
     state = closeTab(state, id);
     stashed.delete(id);
     if (state.tabs.length === 0) {
       newUntitled();
+      return;
+    }
+    if (wasActive && state.activeId === compareId) {
+      // The next tab is the compared one: it moves to the main editor.
+      editor.setState(compareEditor.getState());
+      compareId = null;
+      render();
+      onActiveChange(activeTab(state));
+      onCompareChange(null);
       return;
     }
     if (wasActive) show(state.activeId);
@@ -141,11 +193,20 @@ export function createDocuments({
   }
 
   /**
-   * Open a new Untitled tab.
+   * Open a new Untitled tab, or with `compare` show it in the compare editor
+   * and keep the active tab.
    * @param {string} [text]
+   * @param {{ compare?: boolean }} [options]
    */
-  function newUntitled(text = '') {
+  function newUntitled(text = '', { compare = false } = {}) {
     const id = newId();
+    if (compare) {
+      state = addUntitled(state, id, { dirty: text !== '', activate: false });
+      stashed.set(id, editor.createState(text));
+      setCompare(id);
+      if (text !== '') scheduleDraft(id);
+      return id;
+    }
     const current = state.activeId;
     if (current !== null) stashed.set(current, editor.getState());
     state = addUntitled(state, id, { dirty: text !== '' });
@@ -163,16 +224,39 @@ export function createDocuments({
    * empty Untitled tab that was active is closed, as Notepad does.
    * @param {string} path
    * @param {string} contents
-   * @param {{ fromVault?: boolean, replace?: boolean }} [options]
+   * With `compare` the file is shown in the compare editor instead, beside the
+   * active tab; it resolves false when that file is the active tab itself.
+   * @param {{ fromVault?: boolean, replace?: boolean, compare?: boolean }} [options]
+   * @returns {boolean}
    */
-  function openFile(path, contents, { fromVault = false, replace = false } = {}) {
+  function openFile(path, contents, { fromVault = false, replace = false, compare = false } = {}) {
     const before = activeTab(state);
     const opened = openFileTab(state, newId(), path, { fromVault });
     const { tab, existed } = opened;
+    if (compare) {
+      if (tab.id === state.activeId) return false;
+      if (!existed) {
+        state = { ...opened.state, activeId: state.activeId };
+        stashed.set(tab.id, editor.createState(contents));
+      } else if (!tab.dirty || replace) {
+        if (tab.id === compareId) compareEditor.setState(editor.createState(contents));
+        else stashed.set(tab.id, editor.createState(contents));
+        state = updateTab(state, tab.id, { dirty: false });
+      }
+      if (tab.id === compareId) {
+        render();
+        onCompareChange(findTab(state, compareId));
+      } else {
+        setCompare(tab.id);
+      }
+      return true;
+    }
     if (existed) {
       if (!tab.dirty || replace) {
         if (state.activeId === tab.id) {
           editor.setState(editor.createState(contents));
+        } else if (tab.id === compareId) {
+          compareEditor.setState(editor.createState(contents));
         } else {
           stashed.set(tab.id, editor.createState(contents));
         }
@@ -184,7 +268,7 @@ export function createDocuments({
       } else {
         show(tab.id);
       }
-      return;
+      return true;
     }
     if (before) stashed.set(before.id, editor.getState());
     state = opened.state;
@@ -197,11 +281,12 @@ export function createDocuments({
     }
     render();
     onActiveChange(activeTab(state));
+    return true;
   }
 
-  /** The active document changed through the editor. */
-  function markEdited() {
-    const tab = activeTab(state);
+  /** The active document (or, with `compare`, the compared one) was edited. */
+  function markEdited({ compare = false } = {}) {
+    const tab = compare ? findTab(state, compareId) : activeTab(state);
     if (!tab) return;
     if (!tab.dirty) {
       state = updateTab(state, tab.id, { dirty: true });
@@ -276,6 +361,9 @@ export function createDocuments({
     flushDrafts,
     /** Close without asking (the file is gone). */
     forceClose: drop,
+    setCompare,
+    /** The tab shown in the compare editor, or null outside Diff mode. */
+    compared: () => (compareId === null ? null : findTab(state, compareId)),
     activate: (id) => {
       if (findTab(state, id)) show(id);
     },

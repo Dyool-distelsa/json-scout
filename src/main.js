@@ -11,6 +11,7 @@ import { createVaultPanel } from './ui/vaultPanel.js';
 import { installCloseGuard } from './ui/closeGuard.js';
 import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
 import { createDocuments } from './ui/documents.js';
+import { compareChoices, openComparePicker } from './ui/comparePicker.js';
 import { createTauriDraftStore, createLocalDraftStore } from './ui/drafts.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
@@ -70,7 +71,16 @@ const editor = createEditor(document.getElementById('editor'), {
   onPaste: handlePaste,
 });
 
-let secondaryEditor = null;
+// Diff mode: the compare pane shows another open tab beside the active one.
+const secondaryEditor = createEditor(document.getElementById('editor-secondary'), {
+  doc: '',
+  theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
+  onChange: () => {
+    docs.markEdited({ compare: true });
+    debouncedRefreshSecondaryPanels();
+  },
+  onPaste: handlePaste,
+});
 
 // Open documents: one tab per file or Untitled draft. Untitled text is kept
 // in a recoverable draft (app data folder) until it is saved somewhere.
@@ -85,8 +95,66 @@ const docs = createDocuments({
   askSave: (tab) => askSaveChanges(tab.title),
   saveActive: () => saveActiveDocument(),
   onActiveChange: onActiveDocumentChange,
+  compareEditor: secondaryEditor,
+  onCompareChange: onCompareDocumentChange,
   onError: (message) => toast.showToast(message, 'error'),
 });
+
+/**
+ * Enter, update or leave Diff mode as the compared tab changes.
+ * @param {import('./ui/tabs.js').Tab|null} tab
+ */
+function onCompareDocumentChange(tab) {
+  state.diffMode = tab !== null;
+  document.getElementById('diff-secondary-container').hidden = !state.diffMode;
+  document.querySelector('.editor-pane').dataset.mode = state.diffMode ? 'diff' : 'single';
+  document.getElementById('compare-pick-label').textContent = tab?.title ?? '';
+  document
+    .querySelector('[data-action="diffToggle"]')
+    ?.setAttribute('aria-pressed', String(state.diffMode));
+  // A discrete action, not a keystroke burst: reflect it immediately.
+  refreshDerivedPanels();
+}
+
+/** Ask what to compare the active tab with, below `anchor`. */
+function pickCompare(anchor) {
+  const active = docs.active();
+  const compared = docs.compared();
+  openComparePicker(
+    anchor,
+    compareChoices(docs.tabs(), active?.id ?? null, compared?.id ?? null),
+    (choice) => {
+      if (choice.kind === 'tab') docs.setCompare(choice.id);
+      else if (choice.kind === 'new') docs.newUntitled('', { compare: true });
+      else if (choice.kind === 'open') openCompareFile();
+      else if (choice.kind === 'close') docs.setCompare(null);
+    }
+  );
+}
+
+async function openCompareFile() {
+  if (!isTauriRuntime()) {
+    openFileFallback({ compare: true });
+    return;
+  }
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (!selected) return;
+    await loadFileFromDisk(selected, { compare: true });
+  } catch (err) {
+    toast.showToast(`Could not open file: ${err}`, 'error');
+  }
+}
+
+document
+  .getElementById('compare-pick')
+  .addEventListener('click', (event) => pickCompare(event.currentTarget));
+document.getElementById('compare-close').addEventListener('click', () => docs.setCompare(null));
 
 const rightPanel = initRightPanel({
   tabsEl: document.getElementById('right-panel-tabs'),
@@ -405,20 +473,15 @@ const handlers = {
       setEditorContentAndFlush(unescapeString(editor.getContent()));
       flashPrimaryEditor();
     }),
+  // Diff asks what to compare with; pressed again, it leaves Diff mode.
   diffToggle: () => {
-    state.diffMode = !state.diffMode;
-    const container = document.getElementById('diff-secondary-container');
-    container.hidden = !state.diffMode;
-    if (state.diffMode && !secondaryEditor) {
-      secondaryEditor = createEditor(document.getElementById('editor-secondary'), {
-        doc: '',
-        theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
-        onChange: () => debouncedRefreshSecondaryPanels(),
-      });
+    if (docs.compared()) {
+      docs.setCompare(null);
+      return;
     }
-    // Toggling diff mode is a discrete toolbar action, not a keystroke
-    // burst: reflect it immediately rather than through the debounce.
-    refreshDerivedPanels();
+    const anchor =
+      document.querySelector('[data-action="diffToggle"]') ?? document.getElementById('doc-tabs');
+    pickCompare(anchor);
   },
   indentChange: (value) => {
     state.indent = value;
@@ -426,7 +489,7 @@ const handlers = {
   themeToggle: () => {
     const next = toggleTheme();
     editor.setTheme(next);
-    secondaryEditor?.setTheme(next);
+    secondaryEditor.setTheme(next);
   },
   save: () => saveActiveDocument(),
   open: () => (isTauriRuntime() ? openFileNative() : openFileFallback()),
@@ -529,7 +592,7 @@ function downloadAsFile(text, filename) {
  * so this can never be a real save target — `state.currentPath` stays
  * null.
  */
-function openFileFallback() {
+function openFileFallback({ compare = false } = {}) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.json,application/json';
@@ -538,7 +601,7 @@ function openFileFallback() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      docs.newUntitled(String(reader.result ?? ''));
+      docs.newUntitled(String(reader.result ?? ''), { compare });
       toast.dismissToastsByVariant('error');
     };
     reader.readAsText(file);
@@ -549,14 +612,18 @@ function openFileFallback() {
 /**
  * Open a file in its own tab (or the tab already showing it).
  * @param {string} path
- * @param {{ fromVault?: boolean, replace?: boolean }} [options] see `docs.openFile`
+ * @param {{ fromVault?: boolean, replace?: boolean, compare?: boolean }} [options]
+ *   see `docs.openFile`
  * @returns {Promise<boolean>} whether the file was opened (a failure has
  *   already surfaced its own error toast).
  */
 async function loadFileFromDisk(path, options = {}) {
   try {
     const contents = await tauriInvoke('read_json_file', { path });
-    docs.openFile(path, contents, options);
+    if (!docs.openFile(path, contents, options)) {
+      toast.showToast('That file is the active tab; pick another one to compare with.', 'info');
+      return false;
+    }
     toast.dismissToastsByVariant('error');
     return true;
   } catch (err) {

@@ -28,16 +28,19 @@
 
         <section class="editor-pane">
           <div class="editor-pane__primary">
-            <div id="editor" class="editor"></div>
-            <button
-              id="copy-btn"
-              class="copy-btn"
-              type="button"
-              title="Copy editor content"
-              aria-label="Copy editor content"
-            >
-              Copy
-            </button>
+            <div id="doc-tabs" class="doc-tabs"></div>
+            <div class="editor-pane__body">
+              <div id="editor" class="editor"></div>
+              <button
+                id="copy-btn"
+                class="copy-btn"
+                type="button"
+                title="Copy editor content"
+                aria-label="Copy editor content"
+              >
+                Copy
+              </button>
+            </div>
           </div>
           <div class="editor-pane__diff-container" id="diff-secondary-container" hidden>
             <div id="editor-secondary" class="editor"></div>

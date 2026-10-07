@@ -5,9 +5,13 @@
  */
 
 export const SHORTCUTS = [
+  { action: 'new', key: 'n', label: 'New' },
   { action: 'open', key: 'o', label: 'Open' },
   { action: 'save', key: 's', label: 'Save' },
   { action: 'saveAs', key: 's', shift: true, label: 'Save As' },
+  { action: 'closeTab', key: 'w', label: 'Close Tab' },
+  { action: 'nextTab', key: 'tab', label: 'Next Tab' },
+  { action: 'prevTab', key: 'tab', shift: true, label: 'Previous Tab' },
   { action: 'format', key: 'f', shift: true, label: 'Format' },
   { action: 'minify', key: 'm', shift: true, label: 'Minify' },
   { action: 'validate', key: 'enter', shift: true, label: 'Validate' },
@@ -44,8 +48,8 @@ export function shouldFireShortcut(event) {
   return matchShortcut(event);
 }
 
-const KEY_NAMES = { enter: 'Enter' };
-const MAC_KEY_SYMBOLS = { enter: '↵' };
+const KEY_NAMES = { enter: 'Enter', tab: 'Tab' };
+const MAC_KEY_SYMBOLS = { enter: '↵', tab: '⇥' };
 
 /**
  * Human-readable label for tooltips: 'Ctrl+Shift+F' or '⌘⇧F'.

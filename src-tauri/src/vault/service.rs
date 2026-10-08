@@ -266,21 +266,26 @@ impl<P: SecretProvider> VaultService<P> {
     }
 
     /// Read a secret's working copy and decide what a push would send and
-    /// whether it differs from the base. A JSON working copy must be valid
-    /// and, when it differs, free of duplicate keys.
+    /// whether it differs from the base. A JSON working copy is validated,
+    /// its keys sorted and the result minified, in that order: invalid JSON
+    /// (or, when it differs, duplicate keys) refuses the push. Runs for the
+    /// preview and again when the confirmed push is sent.
     fn prepare(&self, vault: &str, name: &str) -> Result<Prepared, VaultError> {
         let pulled = self.workspace.read_pulled(vault, name)?;
         let (bytes, changed) = match pulled.format {
             Format::Json => {
-                let bytes =
-                    json_text::minify(&pulled.working_text).map_err(|err| VaultError::InvalidJson {
+                let bytes = json_text::sorted_minify(&pulled.working_text).map_err(|err| {
+                    VaultError::InvalidJson {
                         line: err.line,
                         column: err.column,
-                    })?;
-                // A base that cannot be read as JSON cannot vouch for
-                // equality, so the working copy counts as changed.
+                    }
+                })?;
+                // Compared in the same sorted, minified form: reformatting or
+                // reordering keys alone is not a change. A base that cannot be
+                // read as JSON cannot vouch for equality, so the working copy
+                // counts as changed.
                 let changed =
-                    json_text::minify(&pulled.base_text).map_or(true, |base| base != bytes);
+                    json_text::sorted_minify(&pulled.base_text).map_or(true, |base| base != bytes);
                 if changed {
                     let duplicates = json_text::duplicate_keys(&pulled.working_text)
                         .map_err(|err| VaultError::InvalidJson {
@@ -868,8 +873,45 @@ mod tests {
     }
 
     #[test]
-    fn a_json_change_that_only_reorders_keys_or_rewrites_a_number_is_a_change() {
-        for edited in [r#"{"b":2,"a":1}"#, r#"{"a":1.0,"b":2}"#, r#"{"a":1,"b":"2"}"#] {
+    fn a_push_sends_the_working_copy_validated_sorted_and_minified() {
+        let (_dir, svc) = edited_service("{
+  \"b\": {\"y\": 1, \"x\": [ {\"k\":2,\"j\":1} ]},
+  \"a\": 5
+}
+");
+        let preview = svc.push_preview("kv", "cfg").unwrap();
+        assert!(preview.changed);
+        svc.push("kv", "cfg", &preview.content_hash, false).unwrap();
+        let sets = svc.provider.sets();
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].1, r#"{"a":5,"b":{"x":[{"j":1,"k":2}],"y":1}}"#);
+    }
+
+    #[test]
+    fn json_made_invalid_after_the_preview_cancels_the_confirmed_push() {
+        let (dir, svc) = edited_service(EDITED);
+        let preview = svc.push_preview("kv", "cfg").unwrap();
+        write_working(&dir, "kv", "cfg.json", "{\"a\": 5,");
+        let err = svc.push("kv", "cfg", &preview.content_hash, false).unwrap_err();
+        assert!(matches!(err, VaultError::InvalidJson { .. }), "{err:?}");
+        assert!(svc.provider.sets().is_empty());
+    }
+
+    #[test]
+    fn reordering_keys_alone_is_not_a_change_since_keys_are_sorted_before_sending() {
+        for reordered in [r#"{"b":2,"a":1}"#, "{
+  \"b\": 2,
+  \"a\": 1
+}
+"] {
+            let (_dir, svc) = edited_service(reordered);
+            assert!(!svc.push_preview("kv", "cfg").unwrap().changed, "{reordered:?}");
+        }
+    }
+
+    #[test]
+    fn a_json_change_that_rewrites_a_number_or_a_type_is_a_change() {
+        for edited in [r#"{"a":1.0,"b":2}"#, r#"{"a":1,"b":"2"}"#] {
             let (_dir, svc) = edited_service(edited);
             assert!(svc.push_preview("kv", "cfg").unwrap().changed, "{edited:?}");
         }

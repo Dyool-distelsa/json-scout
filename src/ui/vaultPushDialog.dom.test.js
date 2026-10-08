@@ -173,6 +173,18 @@ describe('push dialog: what it shows', () => {
     expect(dialog().textContent).toContain('No key-level changes');
   });
 
+  it('tells that a JSON secret is validated, sorted and minified on push', () => {
+    open();
+    expect(dialog().textContent).toContain(
+      'On push the JSON is validated, its keys sorted and the result minified. Invalid JSON cancels the push.'
+    );
+  });
+
+  it('does not show the JSON note for a text secret', () => {
+    open(previewOf({ format: 'text', baseText: 'old-token-value', workingText: 'new-token-value' }));
+    expect(dialog().textContent).not.toContain('keys sorted');
+  });
+
   it('shows the short version the edit is based on', () => {
     open();
     expect(dialog().textContent).toContain('01234567');

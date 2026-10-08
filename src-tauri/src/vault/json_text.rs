@@ -76,6 +76,17 @@ pub fn minify(text: &str) -> Result<String, JsonTextError> {
     Ok(out)
 }
 
+/// Re-emit `text` minified, with the members of every object sorted by key
+/// (arrays keep their order). Keys compare by their decoded text in UTF-16
+/// code-unit order, as JavaScript's default sort does; equal keys keep their
+/// relative order. Scalars are copied exactly as written.
+pub fn sorted_minify(text: &str) -> Result<String, JsonTextError> {
+    let root = parse(text)?;
+    let mut out = String::with_capacity(text.len());
+    write_sorted_minified(&root, &mut out);
+    Ok(out)
+}
+
 /// Whether `text` is a valid JSON object or array. A JSON scalar such as `123`
 /// or `true` is indistinguishable from a plain password, so it does not count.
 pub fn is_container(text: &str) -> bool {
@@ -404,6 +415,39 @@ fn write_minified(node: &Node<'_>, out: &mut String) {
                 out.push_str(member.key);
                 out.push(':');
                 write_minified(&member.value, out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+fn write_sorted_minified(node: &Node<'_>, out: &mut String) {
+    match node {
+        Node::Scalar(lexeme) => out.push_str(lexeme),
+        Node::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_sorted_minified(item, out);
+            }
+            out.push(']');
+        }
+        Node::Object(members) => {
+            let mut ordered: Vec<(Vec<u16>, &Member<'_>)> = members
+                .iter()
+                .map(|member| (decode_key(member.key).encode_utf16().collect(), member))
+                .collect();
+            ordered.sort_by(|a, b| a.0.cmp(&b.0));
+            out.push('{');
+            for (index, (_, member)) in ordered.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(member.key);
+                out.push(':');
+                write_sorted_minified(&member.value, out);
             }
             out.push('}');
         }
@@ -809,4 +853,36 @@ mod tests {
         assert_eq!(m(r#"{"a":1,"b":2,"a":3}"#), r#"{"a":1,"b":2,"a":3}"#);
         assert_eq!(p(r#"{"a":1,"a":2}"#), "{\n  \"a\": 1,\n  \"a\": 2\n}\n");
     }
+
+    #[test]
+    fn sorted_minify_sorts_keys_at_every_depth_and_keeps_array_order() {
+        let text = "{
+  \"b\": [ {\"z\":1, \"y\":2}, 3 ],
+  \"a\": {\"d\": true, \"c\": null}
+}";
+        assert_eq!(
+            sorted_minify(text).unwrap(),
+            r#"{"a":{"c":null,"d":true},"b":[{"y":2,"z":1},3]}"#
+        );
+    }
+
+    #[test]
+    fn sorted_minify_keeps_scalars_exactly_as_written() {
+        let text = r#"{"n": 1.50e+10, "s": "a é b", "x": -0}"#;
+        assert_eq!(sorted_minify(text).unwrap(), r#"{"n":1.50e+10,"s":"a é b","x":-0}"#);
+    }
+
+    #[test]
+    fn sorted_minify_orders_keys_by_their_decoded_text_like_javascript() {
+        // "a" is "a"; uppercase sorts before lowercase; "é" after "z".
+        let text = r#"{"é":1,"z":2,"b":3,"a":4,"B":5}"#;
+        assert_eq!(sorted_minify(text).unwrap(), r#"{"B":5,"a":4,"b":3,"z":2,"é":1}"#);
+    }
+
+    #[test]
+    fn sorted_minify_rejects_invalid_json() {
+        assert!(sorted_minify("{\"a\":}").is_err());
+        assert!(sorted_minify("").is_err());
+    }
 }
+

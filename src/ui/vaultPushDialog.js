@@ -167,6 +167,16 @@ export function openPushDialog({
 
   const sections = el('div', 'push-sections');
   const note = el('p', 'push-note', 'Pushes appear in Azure as your account.');
+  // What the backend does to a JSON secret before sending it (see prepare()
+  // in src-tauri/src/vault/service.rs); it runs again when the push is sent.
+  const jsonNote =
+    preview.format === 'json'
+      ? el(
+          'p',
+          'push-note push-note--json',
+          'On push the JSON is validated, its keys sorted and the result minified. Invalid JSON cancels the push.'
+        )
+      : null;
 
   const typedRow = el('label', 'push-confirm');
   typedRow.append('Type ', el('code', 'push-confirm__name', name), ' to confirm');
@@ -181,6 +191,7 @@ export function openPushDialog({
   errorEl.setAttribute('role', 'alert');
 
   modal.body.append(facts, conflictBlock, toolsRow, sections, note, confirmSlot, errorEl);
+  if (jsonNote) note.after(jsonNote);
 
   // Buttons are built once; `render` only chooses which are attached.
   const cancelButton = button('Cancel', 'vault-btn push-btn', () => modal.close());

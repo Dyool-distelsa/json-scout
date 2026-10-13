@@ -42,7 +42,7 @@ export function createToolbar(container, handlers, options = {}) {
     },
   ];
 
-  // File menu: New / Open / Save / Save As / Close Tab live in one dropdown.
+  // File menu: New / Open / Open Folder / Save / Save As / Close Tab live in one dropdown.
   const fileGroup = document.createElement('div');
   fileGroup.className = 'toolbar__group';
   const fileMenu = createDropdownMenu({
@@ -51,6 +51,7 @@ export function createToolbar(container, handlers, options = {}) {
     items: [
       { key: 'new', label: 'New', shortcut: formatShortcut('new', isMac) },
       { key: 'open', label: 'Open', shortcut: formatShortcut('open', isMac) },
+      { key: 'openFolder', label: 'Open Folder…' },
       { key: 'save', label: 'Save', shortcut: formatShortcut('save', isMac) },
       { key: 'saveAs', label: 'Save As', shortcut: formatShortcut('saveAs', isMac) },
       { key: 'closeTab', label: 'Close Tab', shortcut: formatShortcut('closeTab', isMac) },

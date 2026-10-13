@@ -156,6 +156,112 @@ pub fn scan_dir_for_json(path: String) -> Result<Vec<JsonFileEntry>, String> {
     Ok(results)
 }
 
+/// Folders `scan_dir_tree` never descends into: hidden ones (`.git`, ...)
+/// and the usual dependency/build dumps, which hold thousands of JSON files
+/// nobody opens by hand.
+const SKIPPED_DIRS: [&str; 4] = ["node_modules", "target", "dist", "build"];
+
+/// How deep `scan_dir_tree` descends below the opened folder.
+const MAX_TREE_DEPTH: usize = 12;
+
+/// Most entries (folders and files) `scan_dir_tree` visits before it stops
+/// and reports the tree as truncated, so opening a huge folder stays quick.
+const MAX_TREE_ENTRIES: usize = 20_000;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TreeFile {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub modified: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TreeDir {
+    pub name: String,
+    pub path: String,
+    pub dirs: Vec<TreeDir>,
+    pub files: Vec<TreeFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DirTree {
+    pub root: TreeDir,
+    /// True when a depth or entry limit cut the scan short.
+    pub truncated: bool,
+}
+
+fn is_skipped_dir(name: &str) -> bool {
+    name.starts_with('.') || SKIPPED_DIRS.iter().any(|skip| name.eq_ignore_ascii_case(skip))
+}
+
+fn modified_millis(metadata: &fs::Metadata) -> Option<u64> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+}
+
+/// Scan `dir` into a `TreeDir`. Subfolders without any `*.json` file below
+/// them are left out. Unreadable subfolders are skipped rather than failing
+/// the whole scan.
+fn scan_tree_level(dir: &Path, depth: usize, budget: &mut usize, truncated: &mut bool) -> std::io::Result<TreeDir> {
+    let mut node = TreeDir {
+        name: dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.to_string_lossy().into_owned()),
+        path: dir.to_string_lossy().into_owned(),
+        dirs: Vec::new(),
+        files: Vec::new(),
+    };
+    for entry in fs::read_dir(dir)? {
+        if *budget == 0 {
+            *truncated = true;
+            break;
+        }
+        *budget -= 1;
+        let Ok(entry) = entry else { continue };
+        let Ok(file_type) = entry.file_type() else { continue };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if file_type.is_dir() {
+            if is_skipped_dir(&name) {
+                continue;
+            }
+            if depth >= MAX_TREE_DEPTH {
+                *truncated = true;
+                continue;
+            }
+            if let Ok(child) = scan_tree_level(&entry.path(), depth + 1, budget, truncated) {
+                if !child.dirs.is_empty() || !child.files.is_empty() {
+                    node.dirs.push(child);
+                }
+            }
+        } else if file_type.is_file() && name.to_lowercase().ends_with(".json") {
+            let Ok(metadata) = entry.metadata() else { continue };
+            node.files.push(TreeFile {
+                path: entry.path().to_string_lossy().into_owned(),
+                size: metadata.len(),
+                modified: modified_millis(&metadata),
+                name,
+            });
+        }
+    }
+    node.dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    node.files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(node)
+}
+
+/// Recursively scan a folder for `*.json` files (case-insensitive), keeping
+/// only the subfolders that lead to one. Hidden and dependency/build
+/// folders are skipped, and depth/entry limits keep huge trees bounded.
+#[tauri::command]
+pub fn scan_dir_tree(path: String) -> Result<DirTree, String> {
+    let mut budget = MAX_TREE_ENTRIES;
+    let mut truncated = false;
+    let root = scan_tree_level(Path::new(&path), 0, &mut budget, &mut truncated)
+        .map_err(|e| format!("Failed to read directory '{}': {}", path, e))?;
+    Ok(DirTree { root, truncated })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +386,42 @@ mod tests {
 
         let results = scan_dir_for_json(dir.path().to_string_lossy().to_string()).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn scan_dir_tree_recurses_and_prunes_folders_without_json() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("b.json"), "{}").unwrap();
+        fs::write(dir.path().join("A.JSON"), "{}").unwrap();
+        fs::write(dir.path().join("notes.txt"), "x").unwrap();
+        let nested = dir.path().join("config").join("env");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("dev.json"), "{\"a\":1}").unwrap();
+        fs::create_dir(dir.path().join("empty")).unwrap();
+        fs::create_dir(dir.path().join("node_modules")).unwrap();
+        fs::write(dir.path().join("node_modules").join("pkg.json"), "{}").unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".git").join("x.json"), "{}").unwrap();
+
+        let tree = scan_dir_tree(dir.path().to_string_lossy().to_string()).unwrap();
+        assert!(!tree.truncated);
+        let files: Vec<&str> = tree.root.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(files, vec!["A.JSON", "b.json"]);
+        assert_eq!(tree.root.dirs.len(), 1);
+        let config = &tree.root.dirs[0];
+        assert_eq!(config.name, "config");
+        assert!(config.files.is_empty());
+        let env = &config.dirs[0];
+        assert_eq!(env.files[0].name, "dev.json");
+        assert_eq!(env.files[0].size, 7);
+        assert_eq!(Path::new(&env.files[0].path), nested.join("dev.json"));
+    }
+
+    #[test]
+    fn scan_dir_tree_reports_an_error_for_a_missing_directory() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("nope");
+        assert!(scan_dir_tree(missing.to_string_lossy().to_string()).is_err());
     }
 
     #[test]

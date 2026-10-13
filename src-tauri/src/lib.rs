@@ -68,6 +68,7 @@ pub fn run() {
             fs_ops::read_json_file,
             fs_ops::write_json_file,
             fs_ops::scan_dir_for_json,
+            fs_ops::scan_dir_tree,
             drafts::drafts_list,
             drafts::draft_save,
             drafts::draft_delete,

@@ -1019,8 +1019,46 @@ body.is-resizing .right-panel {
   color: var(--color-text);
 }
 
-.sidebar__item-meta {
-  display: block;
+.sidebar__item--message,
+.sidebar__item--message:hover {
+  cursor: default;
+  background: transparent;
+  color: var(--color-text-dim);
+  white-space: normal;
+}
+
+/* Files panel tree: one row per folder or file, indented by depth inline. */
+.file-tree__dir,
+.file-tree__file {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.file-tree__chevron {
+  flex: none;
+  width: 10px;
+  font-size: var(--text-xs);
+}
+
+.file-tree__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-tree__dir .file-tree__name {
+  color: var(--color-text);
+}
+
+.file-tree__file .file-tree__name {
+  /* Line file names up with the folder names next to their chevron. */
+  margin-left: calc(10px + var(--space-2));
+}
+
+.file-tree__meta {
+  flex: none;
+  margin-left: auto;
   font-size: var(--text-xs);
   color: var(--color-text-dim);
 }

@@ -33,7 +33,8 @@ Check the machine's actual architecture, copy the exact approved filename, and r
 - **Sort keys** recursively, alphabetically
 - **Escape / Unescape** JSON string content
 - **Stats**: byte size, line count, max depth, total keys, array count, type histogram
-- **File menu** grouping Open, Save and Save As (keyboard accessible: arrow keys, Escape, outside click); native dialogs via `tauri-plugin-dialog`, and Save writes atomically back to the opened file
+- **File menu** grouping Open, Open Folder, Save and Save As (keyboard accessible: arrow keys, Escape, outside click); native dialogs via `tauri-plugin-dialog`, and Save writes atomically back to the opened file
+- **Open Folder** shows every `*.json` file under the chosen folder as a collapsible tree in the Files panel (subfolders without JSON, hidden folders and `node_modules`/`target`/`dist`/`build` are left out)
 - **Auto-clean on paste**: pasting into an empty editor, or over a selection that covers the whole document, validates, repairs, sorts keys and formats the text using the current indent. Text that cannot be repaired is pasted as-is with a notice; pasting a fragment into existing content stays a plain paste
 - **Copy button** in the top-right corner of the editor copies the full editor content
 - Toast notifications (e.g. minify saving), dark/light theme, collapsible sidebar and side panel, drag-and-drop, non-blocking error banners
@@ -45,7 +46,7 @@ Windows only. The main entry points are:
 
 - **Open with JSON Scout** on a `.json` file loads it on startup (CLI argv).
 - **Right-click a `.json` file → "Open in JSON Scout"**.
-- **Right-click a folder background → "JSON Scout here"** — scans the folder for `*.json` files and lists them in the sidebar.
+- **Right-click a folder background → "JSON Scout here"** — scans the folder (and its subfolders) for `*.json` files and shows them as a tree in the Files panel.
 - **Right-click a folder → "JSON Scout here"**.
 
 All of this is registered under `HKEY_CURRENT_USER` only — installing it never requires administrator rights. You can toggle it from the in-app **Settings** tab (backed by Rust `winreg` commands: `install_context_menu` / `uninstall_context_menu` / `is_context_menu_installed`), or run the standalone scripts directly:

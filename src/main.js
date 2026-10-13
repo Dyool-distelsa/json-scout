@@ -199,15 +199,7 @@ window.addEventListener('beforeunload', () => {
   docs.flushDrafts();
 });
 
-const sidebar = createSidebar(document.getElementById('sidebar-list'), async (name) => {
-  if (!state.currentDir) return;
-  await loadFileFromDisk(joinPath(state.currentDir, name));
-});
-
-function joinPath(dir, name) {
-  const sep = dir.includes('\\') ? '\\' : '/';
-  return dir.endsWith(sep) ? `${dir}${name}` : `${dir}${sep}${name}`;
-}
+const sidebar = createSidebar(document.getElementById('sidebar-list'), (path) => loadFileFromDisk(path));
 
 async function tauriInvoke(command, args) {
   const { invoke } = await import('@tauri-apps/api/core');
@@ -302,7 +294,7 @@ function handlePaste(text) {
 function onActiveDocumentChange(tab) {
   state.currentPath = tab?.path ?? null;
   updateFileName(state.currentPath, tab?.title);
-  if (state.currentPath) sidebar.setActive(state.currentPath.split(/[\\/]/).pop());
+  sidebar.setActive(state.currentPath);
   const cursor = editor.getCursorPosition();
   statusBar.setCursor(cursor.line, cursor.column);
   computeDerivedState();
@@ -487,6 +479,10 @@ const handlers = {
   },
   save: () => saveActiveDocument(),
   open: () => (isTauriRuntime() ? openFileNative() : openFileFallback()),
+  openFolder: () => {
+    if (isTauriRuntime()) openFolderNative();
+    else toast.showToast('Opening a folder needs the desktop app.', 'info');
+  },
   saveAs: () => saveActiveDocument({ askPath: true }),
   settings: () => openSettingsDialog((msg, kind) => toast.showToast(msg, kind)),
   help: () =>
@@ -573,6 +569,21 @@ async function openFileNative() {
   }
 }
 
+/**
+ * Pick a folder with the native dialog and show its JSON files as a tree in
+ * the Files panel. Does nothing if the user cancels.
+ */
+async function openFolderNative() {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selected = await open({ multiple: false, directory: true });
+    if (!selected) return;
+    await loadDirectory(selected);
+  } catch (err) {
+    toast.showToast(`Could not open folder: ${err}`, 'error');
+  }
+}
+
 function downloadAsFile(text, filename) {
   const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -631,9 +642,12 @@ async function loadFileFromDisk(path, options = {}) {
 
 async function loadDirectory(dirPath) {
   try {
-    const files = await tauriInvoke('scan_dir_for_json', { path: dirPath });
+    const tree = await tauriInvoke('scan_dir_tree', { path: dirPath });
     state.currentDir = dirPath;
-    sidebar.setFiles(files);
+    sidebar.setTree(tree);
+    showSidebarTab('files');
+    sidebarCollapse.setCollapsed(false);
+    toast.dismissToastsByVariant('error');
   } catch (err) {
     toast.showToast(`Could not scan folder ${dirPath}: ${err}`, 'error');
   }

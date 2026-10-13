@@ -1,6 +1,7 @@
 mod cli;
 mod drafts;
 mod fs_ops;
+mod git_status;
 mod shell_integration;
 mod vault;
 
@@ -69,6 +70,7 @@ pub fn run() {
             fs_ops::write_json_file,
             fs_ops::scan_dir_for_json,
             fs_ops::scan_dir_tree,
+            git_status::git_changed_json,
             drafts::drafts_list,
             drafts::draft_save,
             drafts::draft_delete,

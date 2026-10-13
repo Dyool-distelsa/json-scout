@@ -12,6 +12,7 @@ import {
   closeTab,
   markSaved,
   cycle,
+  tabsToClose,
 } from './tabs.js';
 
 const ids = (state) => state.tabs.map((t) => t.id);
@@ -109,5 +110,26 @@ describe('cycle', () => {
     state = addUntitled(state, 'b');
     expect(cycle(state, 1).activeId).toBe('a');
     expect(cycle(activate(state, 'a'), -1).activeId).toBe('b');
+  });
+});
+
+describe('tabsToClose', () => {
+  let state = addUntitled(INITIAL_TABS, 'a');
+  state = addUntitled(state, 'b');
+  state = addUntitled(state, 'c');
+
+  it.each([
+    ['this', ['b']],
+    ['all', ['a', 'b', 'c']],
+    ['right', ['c']],
+    ['left', ['a']],
+  ])('%s', (which, expected) => {
+    expect(tabsToClose(state, 'b', which)).toEqual(expected);
+  });
+
+  it('is empty at the edges and for an unknown tab', () => {
+    expect(tabsToClose(state, 'c', 'right')).toEqual([]);
+    expect(tabsToClose(state, 'a', 'left')).toEqual([]);
+    expect(tabsToClose(state, 'zz', 'all')).toEqual([]);
   });
 });

@@ -10,7 +10,8 @@ import { createVaultPanel } from './ui/vaultPanel.js';
 import { installCloseGuard } from './ui/closeGuard.js';
 import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
 import { createDocuments } from './ui/documents.js';
-import { compareChoices, fileChoices, openComparePicker } from './ui/comparePicker.js';
+import { compareChoices, fileChoices, tabChoices, openComparePicker } from './ui/comparePicker.js';
+import { findTab, tabsToClose } from './ui/tabs.js';
 import { createTauriDraftStore, createLocalDraftStore } from './ui/drafts.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
@@ -89,6 +90,15 @@ const docs = createDocuments({
     onActivate: (id) => docs.activate(id),
     onClose: (id) => docs.requestClose(id),
     onNew: () => docs.newUntitled(),
+    onContextMenu: (id, event) => {
+      const state = { tabs: docs.tabs(), activeId: docs.active()?.id ?? null };
+      openComparePicker(
+        event.currentTarget,
+        tabChoices(state, id),
+        (choice) => docs.closeMany(tabsToClose(state, id, choice.kind)),
+        { heading: findTab(state, id)?.title ?? 'Tab', point: { left: event.clientX, top: event.clientY } }
+      );
+    },
   }),
   drafts: isTauriRuntime() ? createTauriDraftStore(tauriInvoke) : createLocalDraftStore(pluginStorage()),
   askSave: (tab) => askSaveChanges(tab.title),

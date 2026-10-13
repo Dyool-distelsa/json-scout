@@ -4,8 +4,10 @@
  * the folder holding the active file is expanded so it stays visible.
  * @param {HTMLElement} container
  * @param {(path: string) => void} onSelect called with the file's full path
+ * @param {(path: string, event: MouseEvent) => void} [onContextMenu] a file
+ *   was right-clicked; the caller shows its menu
  */
-export function createSidebar(container, onSelect) {
+export function createSidebar(container, onSelect, onContextMenu) {
   /** @type {{ root: TreeDir, truncated?: boolean } | null} */
   let tree = null;
   let activePath = null;
@@ -99,6 +101,12 @@ export function createSidebar(container, onSelect) {
       onSelect(file.path);
       render();
     });
+    if (onContextMenu) {
+      item.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        onContextMenu(file.path, event);
+      });
+    }
     return item;
   }
 

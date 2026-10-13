@@ -34,7 +34,7 @@ Check the machine's actual architecture, copy the exact approved filename, and r
 - **Escape / Unescape** JSON string content
 - **Stats**: byte size, line count, max depth, total keys, array count, type histogram
 - **File menu** grouping Open, Open Folder, Save and Save As (keyboard accessible: arrow keys, Escape, outside click); native dialogs via `tauri-plugin-dialog`, and Save writes atomically back to the opened file
-- **Open Folder** shows every `*.json` file under the chosen folder as a collapsible tree in the Files panel (subfolders without JSON, hidden folders and `node_modules`/`target`/`dist`/`build` are left out)
+- **Open Folder** shows every `*.json` file under the chosen folder as a collapsible tree in the Files panel (subfolders without JSON, hidden folders and `node_modules`/`target`/`dist`/`build` are left out); right-click a file there to **Open** it or **Compare with active tab** in Diff mode
 - **Auto-clean on paste**: pasting into an empty editor, or over a selection that covers the whole document, validates, repairs, sorts keys and formats the text using the current indent. Text that cannot be repaired is pasted as-is with a notice; pasting a fragment into existing content stays a plain paste
 - **Copy button** in the top-right corner of the editor copies the full editor content
 - Toast notifications (e.g. minify saving), dark/light theme, collapsible sidebar and side panel, drag-and-drop, non-blocking error banners

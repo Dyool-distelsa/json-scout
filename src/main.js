@@ -10,7 +10,7 @@ import { createVaultPanel } from './ui/vaultPanel.js';
 import { installCloseGuard } from './ui/closeGuard.js';
 import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
 import { createDocuments } from './ui/documents.js';
-import { compareChoices, openComparePicker } from './ui/comparePicker.js';
+import { compareChoices, fileChoices, openComparePicker } from './ui/comparePicker.js';
 import { createTauriDraftStore, createLocalDraftStore } from './ui/drafts.js';
 import { collapseToggleState, shouldToggleOnHeaderClick } from './ui/collapsible.js';
 import { matchShortcut, shouldFireShortcut } from './ui/shortcuts.js';
@@ -199,7 +199,21 @@ window.addEventListener('beforeunload', () => {
   docs.flushDrafts();
 });
 
-const sidebar = createSidebar(document.getElementById('sidebar-list'), (path) => loadFileFromDisk(path));
+const sidebar = createSidebar(
+  document.getElementById('sidebar-list'),
+  (path) => loadFileFromDisk(path),
+  (path, event) => {
+    openComparePicker(
+      event.currentTarget,
+      fileChoices(path, docs.active()?.path ?? null),
+      (choice) => {
+        if (choice.kind === 'open') loadFileFromDisk(path);
+        else if (choice.kind === 'compare') loadFileFromDisk(path, { compare: true });
+      },
+      { heading: path.split(/[\\/]/).pop(), point: { left: event.clientX, top: event.clientY } }
+    );
+  }
+);
 
 async function tauriInvoke(command, args) {
   const { invoke } = await import('@tauri-apps/api/core');

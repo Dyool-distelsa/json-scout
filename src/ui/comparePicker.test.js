@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compareChoices } from './comparePicker.js';
+import { compareChoices, fileChoices } from './comparePicker.js';
 
 const tab = (id, title) => ({ id, title, path: null, dirty: false, fromVault: false });
 
@@ -22,5 +22,19 @@ describe('compareChoices', () => {
     const choices = compareChoices([tab('a', 'A'), tab('b', 'B')], 'a', 'b');
     expect(choices[0]).toMatchObject({ id: 'b', current: true });
     expect(choices.at(-1)).toEqual({ kind: 'close', label: 'Close compare' });
+  });
+});
+
+describe('fileChoices', () => {
+  it('offers Open and Compare for a file other than the active tab', () => {
+    expect(fileChoices('C:/p/b.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open', 'compare']);
+  });
+
+  it('offers Compare when no file tab is active', () => {
+    expect(fileChoices('C:/p/b.json', null).map((c) => c.kind)).toEqual(['open', 'compare']);
+  });
+
+  it('leaves out Compare for the active tab itself', () => {
+    expect(fileChoices('C:/p/a.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open']);
   });
 });

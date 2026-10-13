@@ -66,6 +66,17 @@ describe('createSidebar', () => {
     expect(row(container, 'dev.json').classList.contains('active')).toBe(true);
   });
 
+  it('reports a right-click on a file without opening it', () => {
+    const onContextMenu = vi.fn();
+    sidebar = createSidebar(container, onSelect, onContextMenu);
+    sidebar.setTree(TREE);
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row(container, 'package.json').dispatchEvent(event);
+    expect(onContextMenu).toHaveBeenCalledWith('C:\\proj\\package.json', event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('says when the folder has no JSON files or was cut short', () => {
     sidebar.setTree({ truncated: true, root: { name: 'empty', path: 'C:\\empty', dirs: [], files: [] } });
     expect(container.textContent).toContain('No JSON files in this folder');

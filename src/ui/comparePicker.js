@@ -24,21 +24,36 @@ export function compareChoices(tabs, activeId, compareId) {
   return items;
 }
 
+/**
+ * What right-clicking a file in the Files panel offers: open it, and compare
+ * it with the active tab unless it is the active tab. Pure, so it is unit
+ * tested.
+ * @param {string} path the clicked file
+ * @param {string|null} activePath the active tab's file, if any
+ * @returns {Array<{ kind: 'open'|'compare', label: string }>}
+ */
+export function fileChoices(path, activePath) {
+  const items = [{ kind: 'open', label: 'Open' }];
+  if (path !== activePath) items.push({ kind: 'compare', label: 'Compare with active tab' });
+  return items;
+}
+
 let openMenu = null;
 
 /**
- * Show the picker under `anchor`. Arrow keys move, Enter picks, Escape or a
- * click elsewhere closes it.
+ * Show the picker under `anchor` (or at `options.point`, for a right-click
+ * menu). Arrow keys move, Enter picks, Escape or a click elsewhere closes it.
  * @param {HTMLElement} anchor
- * @param {ReturnType<typeof compareChoices>} choices
- * @param {(choice: ReturnType<typeof compareChoices>[number]) => void} onPick
+ * @param {Array<{ kind: string, label?: string, current?: boolean }>} choices
+ * @param {(choice: any) => void} onPick
+ * @param {{ heading?: string, point?: { left: number, top: number } }} [options]
  */
-export function openComparePicker(anchor, choices, onPick) {
+export function openComparePicker(anchor, choices, onPick, { heading = 'Compare with', point } = {}) {
   openMenu?.close();
   const menu = el('div', 'dropdown-menu compare-menu');
   menu.setAttribute('role', 'menu');
-  menu.setAttribute('aria-label', 'Compare with');
-  menu.appendChild(el('div', 'compare-menu__heading', 'Compare with'));
+  menu.setAttribute('aria-label', heading);
+  menu.appendChild(el('div', 'compare-menu__heading', heading));
 
   const items = [];
   for (const choice of choices) {
@@ -66,8 +81,8 @@ export function openComparePicker(anchor, choices, onPick) {
 
   const rect = anchor.getBoundingClientRect();
   const { left, top } = clampMenuPosition({
-    left: rect.left,
-    top: rect.bottom + 4,
+    left: point?.left ?? rect.left,
+    top: point?.top ?? rect.bottom + 4,
     menuWidth: menu.offsetWidth,
     menuHeight: menu.offsetHeight,
     viewportWidth: window.innerWidth,

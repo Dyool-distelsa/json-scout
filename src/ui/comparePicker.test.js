@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compareChoices, fileChoices } from './comparePicker.js';
+import { compareChoices, fileChoices, tabChoices } from './comparePicker.js';
 
 const tab = (id, title) => ({ id, title, path: null, dirty: false, fromVault: false });
 
@@ -36,5 +36,20 @@ describe('fileChoices', () => {
 
   it('leaves out Compare for the active tab itself', () => {
     expect(fileChoices('C:/p/a.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open']);
+  });
+});
+
+describe('tabChoices', () => {
+  const state = { tabs: [tab('a', 'A'), tab('b', 'B'), tab('c', 'C')], activeId: 'a' };
+  const kinds = (id) => tabChoices(state, id).map((c) => c.kind);
+
+  it('offers both sides only when there are tabs there', () => {
+    expect(kinds('b')).toEqual(['this', 'all', 'right', 'left']);
+    expect(kinds('a')).toEqual(['this', 'all', 'right']);
+    expect(kinds('c')).toEqual(['this', 'all', 'left']);
+  });
+
+  it('offers nothing for an unknown tab', () => {
+    expect(kinds('zz')).toEqual([]);
   });
 });

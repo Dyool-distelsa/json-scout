@@ -140,6 +140,25 @@ describe('documents', () => {
     expect(titles(docs)).toEqual(['Untitled 1']);
   });
 
+  it('closes several tabs and stops at the first one whose close is cancelled', async () => {
+    const askSave = vi.fn(async () => 'cancel');
+    const { docs, editor } = setup({ askSave });
+    docs.openFile('/x/a.json', 'a');
+    docs.openFile('/x/b.json', 'b');
+    editor.type('edited');
+    docs.markEdited();
+    docs.openFile('/x/c.json', 'c');
+    const [a, b, c] = docs.tabs().map((t) => t.id);
+
+    expect(await docs.closeMany([a, b, c])).toBe(false);
+    expect(titles(docs)).toEqual(['b.json', 'c.json']);
+    expect(askSave).toHaveBeenCalledTimes(1);
+
+    askSave.mockResolvedValueOnce('discard');
+    expect(await docs.closeMany([b, c])).toBe(true);
+    expect(titles(docs)).toEqual(['Untitled 1']);
+  });
+
   it('does not ask about an empty Untitled tab, and deletes the draft of a discarded one', async () => {
     const { docs, editor, askSave, drafts } = setup();
     const id = docs.newUntitled();

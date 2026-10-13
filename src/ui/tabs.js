@@ -124,6 +124,23 @@ export function closeTab(state, id) {
   return { tabs, activeId: next ? next.id : null };
 }
 
+/**
+ * Ids a tab-header "close" command applies to, in strip order.
+ * @param {TabsState} state
+ * @param {string} id the right-clicked tab
+ * @param {'this'|'all'|'right'|'left'} which
+ * @returns {string[]}
+ */
+export function tabsToClose(state, id, which) {
+  const index = state.tabs.findIndex((t) => t.id === id);
+  if (index === -1) return [];
+  const all = state.tabs.map((t) => t.id);
+  if (which === 'all') return all;
+  if (which === 'right') return all.slice(index + 1);
+  if (which === 'left') return all.slice(0, index);
+  return [id];
+}
+
 /** @param {Partial<Tab>} patch */
 export function updateTab(state, id, patch) {
   return {

@@ -11,19 +11,26 @@ afterEach(() => {
 });
 
 describe('openChangeDiffDialog', () => {
-  it('lists the key changes with their values shown', () => {
+  it('shows the lines that changed like git diff, values included', () => {
     openChangeDiffDialog({
       change: change('modified'),
-      baseText: '{"db":{"password":"old-secret"},"port":1}',
-      workingText: '{"db":{"password":"new-secret"},"port":1,"debug":true}',
+      baseText: ['{', '  "password": "old-secret",', '  "port": 1', '}', ''].join('\n'),
+      workingText: ['{', '  "password": "new-secret",', '  "port": 1,', '  "debug": true', '}', ''].join('\n'),
       onOpen: vi.fn(),
     });
-    const text = dialog().textContent;
     expect(dialog().querySelector('.modal__title').textContent).toBe('cfg/app.json');
-    expect(text).toContain('old-secret');
-    expect(text).toContain('new-secret');
-    expect(text).toContain('1 added · 1 changed');
-    expect(dialog().querySelector('.push-value--masked')).toBeNull();
+    expect(dialog().querySelector('.git-diff__hunk').textContent).toBe('@@ -1,4 +1,5 @@');
+    const rows = [...dialog().querySelectorAll('.git-diff__line')].map(
+      (r) => r.querySelector('.git-diff__sign').textContent + r.querySelector('.git-diff__text').textContent
+    );
+    expect(rows).toEqual(['{', '-  "password": "old-secret",', '-  "port": 1', '+  "password": "new-secret",', '+  "port": 1,', '+  "debug": true', '}'].map((r) => (/^[-+]/.test(r) ? r : ' ' + r)));
+    expect(dialog().querySelector('.change-diff__stat--add').textContent).toBe('+3');
+  });
+
+  it('formats single-line JSON before comparing it', () => {
+    openChangeDiffDialog({ change: change('modified'), baseText: '{"a":1,"b":2}', workingText: '{"a":1,"b":3}' });
+    expect(dialog().textContent).toContain('formatted to compare');
+    expect(dialog().querySelectorAll('.git-diff__line--del')).toHaveLength(1);
   });
 
   it('opens the file from the dialog', () => {

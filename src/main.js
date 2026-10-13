@@ -3,6 +3,7 @@ import { createEditor } from './ui/editor.js';
 import { createToolbar } from './ui/toolbar.js';
 import { createStatusBar } from './ui/statusbar.js';
 import { createSidebar } from './ui/sidebar.js';
+import { createChangesPanel } from './ui/changesPanel.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { openSettingsDialog, openHelpDialog } from './ui/appDialogs.js';
@@ -209,21 +210,27 @@ window.addEventListener('beforeunload', () => {
   docs.flushDrafts();
 });
 
-const sidebar = createSidebar(
-  document.getElementById('sidebar-list'),
-  (path) => loadFileFromDisk(path),
-  (path, event) => {
-    openComparePicker(
-      event.currentTarget,
-      fileChoices(path, docs.active()?.path ?? null),
-      (choice) => {
-        if (choice.kind === 'open') loadFileFromDisk(path);
-        else if (choice.kind === 'compare') loadFileFromDisk(path, { compare: true });
-      },
-      { heading: path.split(/[\\/]/).pop(), point: { left: event.clientX, top: event.clientY } }
-    );
-  }
-);
+/** Right-click menu of a file in the Files tree or the Changes list. */
+function openFileMenu(path, event) {
+  openComparePicker(
+    event.currentTarget,
+    fileChoices(path, docs.active()?.path ?? null),
+    (choice) => {
+      if (choice.kind === 'open') loadFileFromDisk(path);
+      else if (choice.kind === 'compare') loadFileFromDisk(path, { compare: true });
+    },
+    { heading: path.split(/[\\/]/).pop(), point: { left: event.clientX, top: event.clientY } }
+  );
+}
+
+const sidebar = createSidebar(document.getElementById('sidebar-list'), (path) => loadFileFromDisk(path), openFileMenu);
+
+// Git changes of the opened folder, under the Files tree (desktop app only).
+const changesPanel = createChangesPanel(document.getElementById('sidebar-changes'), {
+  load: (dir) => (isTauriRuntime() ? tauriInvoke('git_changed_json', { path: dir }) : Promise.resolve(null)),
+  onSelect: (path) => loadFileFromDisk(path),
+  onContextMenu: openFileMenu,
+});
 
 async function tauriInvoke(command, args) {
   const { invoke } = await import('@tauri-apps/api/core');
@@ -319,6 +326,7 @@ function onActiveDocumentChange(tab) {
   state.currentPath = tab?.path ?? null;
   updateFileName(state.currentPath, tab?.title);
   sidebar.setActive(state.currentPath);
+  changesPanel.setActive(state.currentPath);
   const cursor = editor.getCursorPosition();
   statusBar.setCursor(cursor.line, cursor.column);
   computeDerivedState();
@@ -532,6 +540,7 @@ async function saveActiveDocument({ askPath = false } = {}) {
       docs.markSaved(state.currentPath);
       toast.showToast('Saved.', 'success');
       vaultPanel.refreshLocalStates();
+      changesPanel.refresh();
       return true;
     } catch (err) {
       toast.showToast(`Save failed: ${err}`, 'error');
@@ -566,6 +575,7 @@ async function saveAsNative(text) {
     docs.markSaved(path);
     toast.showToast('Saved.', 'success');
     vaultPanel.refreshLocalStates();
+    changesPanel.refresh();
     return true;
   } catch (err) {
     toast.showToast(`Save failed: ${err}`, 'error');
@@ -669,6 +679,7 @@ async function loadDirectory(dirPath) {
     const tree = await tauriInvoke('scan_dir_tree', { path: dirPath });
     state.currentDir = dirPath;
     sidebar.setTree(tree);
+    changesPanel.setFolder(dirPath);
     showSidebarTab('files');
     sidebarCollapse.setCollapsed(false);
     toast.dismissToastsByVariant('error');
@@ -805,6 +816,7 @@ function showSidebarTab(requested, { focus = false } = {}) {
     tabButton.setAttribute('aria-selected', String(selected));
     tabButton.tabIndex = selected ? 0 : -1;
     sidebarPanels[id].hidden = !(shown && selected);
+    if (id === 'files') changesPanel.setVisible(shown && selected);
   }
   // With a single tab the strip reads as a plain title.
   sidebarTabsEl.dataset.count = String(visible.length);
@@ -845,7 +857,10 @@ showSidebarTab('files');
 
 // A pulled file can be edited and saved outside the app too; coming back to the
 // window re-reads which secrets have local edits (the panel skips it while hidden).
-window.addEventListener('focus', () => vaultPanel.refreshLocalStates());
+window.addEventListener('focus', () => {
+  vaultPanel.refreshLocalStates();
+  changesPanel.refresh();
+});
 
 const dropzoneOverlay = document.createElement('div');
 dropzoneOverlay.className = 'dropzone-overlay';

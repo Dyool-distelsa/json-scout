@@ -9,11 +9,12 @@ import { openModal } from './modal.js';
  *   onActivate: (id: string) => void,
  *   onClose: (id: string) => void,
  *   onNew: () => void,
+ *   onContextMenu?: (id: string, event: MouseEvent) => void,
  * }} handlers
  * @returns {{ render: (state: import('./tabs.js').TabsState, compareId?: string|null) => void }}
  *   `compareId` marks the tab shown in the compare pane (Diff mode).
  */
-export function createTabStrip(container, { onActivate, onClose, onNew }) {
+export function createTabStrip(container, { onActivate, onClose, onNew, onContextMenu }) {
   container.replaceChildren();
   const list = el('div', 'doc-tabs__list');
   list.setAttribute('role', 'tablist');
@@ -72,6 +73,12 @@ export function createTabStrip(container, { onActivate, onClose, onNew }) {
             onClose(tab.id);
           }
         });
+        if (onContextMenu) {
+          node.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            onContextMenu(tab.id, event);
+          });
+        }
         return node;
       })
     );

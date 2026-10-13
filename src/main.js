@@ -4,6 +4,7 @@ import { createToolbar } from './ui/toolbar.js';
 import { createStatusBar } from './ui/statusbar.js';
 import { createSidebar } from './ui/sidebar.js';
 import { createChangesPanel } from './ui/changesPanel.js';
+import { openChangeDiffDialog } from './ui/changeDiffDialog.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { openSettingsDialog, openHelpDialog } from './ui/appDialogs.js';
@@ -210,17 +211,39 @@ window.addEventListener('beforeunload', () => {
   docs.flushDrafts();
 });
 
-/** Right-click menu of a file in the Files tree or the Changes list. */
-function openFileMenu(path, event) {
+/**
+ * Right-click menu of a file in the Files tree, or (with `change`) of an entry
+ * in the Changes list.
+ */
+function openFileMenu(path, event, change = null) {
   openComparePicker(
     event.currentTarget,
-    fileChoices(path, docs.active()?.path ?? null),
+    fileChoices(path, docs.active()?.path ?? null, { changeKind: change?.kind }),
     (choice) => {
-      if (choice.kind === 'open') loadFileFromDisk(path);
+      if (choice.kind === 'changes') showChange(change);
+      else if (choice.kind === 'open') loadFileFromDisk(path);
       else if (choice.kind === 'compare') loadFileFromDisk(path, { compare: true });
     },
     { heading: path.split(/[\\/]/).pop(), point: { left: event.clientX, top: event.clientY } }
   );
+}
+
+/**
+ * Show what changed in a file of the Changes list since the last commit:
+ * the committed text against the one on disk, with every value visible.
+ * @param {import('./ui/changesPanel.js').Change} change
+ */
+async function showChange(change) {
+  const dir = state.currentDir;
+  try {
+    const [baseText, workingText] = await Promise.all([
+      change.head ? tauriInvoke('git_head_text', { dir, head: change.head }) : '',
+      change.kind === 'deleted' ? '' : tauriInvoke('read_json_file', { path: change.path }),
+    ]);
+    openChangeDiffDialog({ change, baseText, workingText, onOpen: () => loadFileFromDisk(change.path) });
+  } catch (err) {
+    toast.showToast(`Could not show the changes of ${change.relative}: ${err}`, 'error');
+  }
 }
 
 const sidebar = createSidebar(document.getElementById('sidebar-list'), (path) => loadFileFromDisk(path), openFileMenu);
@@ -228,8 +251,8 @@ const sidebar = createSidebar(document.getElementById('sidebar-list'), (path) =>
 // Git changes of the opened folder, under the Files tree (desktop app only).
 const changesPanel = createChangesPanel(document.getElementById('sidebar-changes'), {
   load: (dir) => (isTauriRuntime() ? tauriInvoke('git_changed_json', { path: dir }) : Promise.resolve(null)),
-  onSelect: (path) => loadFileFromDisk(path),
-  onContextMenu: openFileMenu,
+  onShow: showChange,
+  onContextMenu: (change, event) => openFileMenu(change.path, event, change),
 });
 
 async function tauriInvoke(command, args) {

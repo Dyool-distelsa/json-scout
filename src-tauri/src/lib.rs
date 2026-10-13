@@ -71,6 +71,7 @@ pub fn run() {
             fs_ops::scan_dir_for_json,
             fs_ops::scan_dir_tree,
             git_status::git_changed_json,
+            git_status::git_head_text,
             drafts::drafts_list,
             drafts::draft_save,
             drafts::draft_delete,

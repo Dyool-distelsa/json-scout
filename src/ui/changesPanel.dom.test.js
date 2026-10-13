@@ -8,16 +8,16 @@ const CHANGES = [
 ];
 
 let container;
-let onSelect;
+let onShow;
 let onContextMenu;
 
 beforeEach(() => {
   container = document.createElement('section');
-  onSelect = vi.fn();
+  onShow = vi.fn();
   onContextMenu = vi.fn();
 });
 
-const make = (load) => createChangesPanel(container, { load, onSelect, onContextMenu });
+const make = (load) => createChangesPanel(container, { load, onShow, onContextMenu });
 const items = () => [...container.querySelectorAll('.changes__item')];
 
 describe('createChangesPanel', () => {
@@ -40,17 +40,16 @@ describe('createChangesPanel', () => {
     expect(items().map((i) => i.textContent)).toEqual(['a.jsonM', 'sub/gone.jsonD']);
   });
 
-  it('opens and right-clicks a change, but not a deleted one', async () => {
+  it('shows a change on click, deleted ones too, and reports a right-click', async () => {
     const panel = make(vi.fn(async () => CHANGES));
     await panel.setFolder('/p');
     const [modified, deleted] = items();
     modified.click();
     deleted.click();
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith('/p/a.json');
+    expect(onShow.mock.calls).toEqual([[CHANGES[0]], [CHANGES[1]]]);
     const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     modified.dispatchEvent(event);
-    expect(onContextMenu).toHaveBeenCalledWith('/p/a.json', event);
+    expect(onContextMenu).toHaveBeenCalledWith(CHANGES[0], event);
   });
 
   it('says when nothing changed', async () => {

@@ -37,6 +37,12 @@ describe('fileChoices', () => {
   it('leaves out Compare for the active tab itself', () => {
     expect(fileChoices('C:/p/a.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open']);
   });
+
+  it('puts Show Changes first for a file in the Changes list', () => {
+    const kinds = (kind) => fileChoices('C:/p/b.json', null, { changeKind: kind }).map((c) => c.kind);
+    expect(kinds('modified')).toEqual(['changes', 'open', 'compare']);
+    expect(kinds('deleted')).toEqual(['changes']);
+  });
 });
 
 describe('tabChoices', () => {

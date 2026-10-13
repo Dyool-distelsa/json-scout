@@ -16,12 +16,12 @@ const BADGES = {
  * folder is not in a git repository, or while another sidebar tab is shown.
  * @param {HTMLElement} container
  * @param {{
- *   load: (dir: string) => Promise<Array<{ relative: string, path: string, kind: string }> | null>,
- *   onSelect: (path: string) => void,
- *   onContextMenu?: (path: string, event: MouseEvent) => void,
+ *   load: (dir: string) => Promise<Change[] | null>,
+ *   onShow: (change: Change) => void, shows what changed in the file
+ *   onContextMenu?: (change: Change, event: MouseEvent) => void,
  * }} deps
  */
-export function createChangesPanel(container, { load, onSelect, onContextMenu }) {
+export function createChangesPanel(container, { load, onShow, onContextMenu }) {
   container.replaceChildren();
   container.classList.add('changes');
   const title = el('div', 'changes__title', 'Changes');
@@ -49,25 +49,20 @@ export function createChangesPanel(container, { load, onSelect, onContextMenu })
     }
     list.replaceChildren(
       ...changes.map((change) => {
-        const deleted = change.kind === 'deleted';
         const item = el('div', `sidebar__item changes__item changes__item--${change.kind}`);
         item.setAttribute('role', 'listitem');
-        item.title = `${change.path} (${change.kind})`;
+        item.title = `${change.path} (${change.kind}): click to see what changed`;
         if (change.path === activePath) item.classList.add('active');
         const name = el('span', 'file-tree__name', change.relative);
         const badge = el('span', 'changes__badge', BADGES[change.kind] ?? '?');
         badge.setAttribute('aria-label', change.kind);
         item.append(name, badge);
-        if (deleted) {
-          item.setAttribute('aria-disabled', 'true');
-        } else {
-          item.addEventListener('click', () => onSelect(change.path));
-          if (onContextMenu) {
-            item.addEventListener('contextmenu', (event) => {
-              event.preventDefault();
-              onContextMenu(change.path, event);
-            });
-          }
+        item.addEventListener('click', () => onShow(change));
+        if (onContextMenu) {
+          item.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            onContextMenu(change, event);
+          });
         }
         return item;
       })
@@ -113,3 +108,7 @@ export function createChangesPanel(container, { load, onSelect, onContextMenu })
     },
   };
 }
+
+/**
+ * @typedef {{ relative: string, path: string, kind: string, head: string | null }} Change
+ */

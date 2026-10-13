@@ -38,6 +38,22 @@ export function fileChoices(path, activePath) {
   return items;
 }
 
+/**
+ * What right-clicking a tab header offers. Close to the Right/Left only
+ * appear when there are tabs on that side. Pure, so it is unit tested.
+ * @param {import('./tabs.js').TabsState} state
+ * @param {string} id the right-clicked tab
+ * @returns {Array<{ kind: 'this'|'all'|'right'|'left', label: string }>}
+ */
+export function tabChoices(state, id) {
+  const index = state.tabs.findIndex((t) => t.id === id);
+  if (index === -1) return [];
+  const items = [{ kind: 'this', label: 'Close' }, { kind: 'all', label: 'Close All' }];
+  if (index < state.tabs.length - 1) items.push({ kind: 'right', label: 'Close to the Right' });
+  if (index > 0) items.push({ kind: 'left', label: 'Close to the Left' });
+  return items;
+}
+
 let openMenu = null;
 
 /**

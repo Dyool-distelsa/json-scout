@@ -316,6 +316,19 @@ export function createDocuments({
   }
 
   /**
+   * Close several tabs one by one, asking about each with unsaved work.
+   * Cancelling one stops there and keeps it and the rest open.
+   * @param {string[]} ids
+   * @returns {Promise<boolean>} whether every tab was closed
+   */
+  async function closeMany(ids) {
+    for (const id of ids) {
+      if (!(await requestClose(id))) return false;
+    }
+    return true;
+  }
+
+  /**
    * Restore the drafts of the last run as Untitled tabs. A pristine empty tab
    * opened meanwhile gives way to them.
    */
@@ -357,6 +370,7 @@ export function createDocuments({
     openFile,
     markEdited,
     requestClose,
+    closeMany,
     restore,
     flushDrafts,
     /** Close without asking (the file is gone). */

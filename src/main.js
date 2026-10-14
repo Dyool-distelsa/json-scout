@@ -3,6 +3,7 @@ import { createEditor } from './ui/editor.js';
 import { createToolbar } from './ui/toolbar.js';
 import { createStatusBar } from './ui/statusbar.js';
 import { createSidebar } from './ui/sidebar.js';
+import { createLoadingOverlay } from './ui/loadingOverlay.js';
 import { createChangesPanel } from './ui/changesPanel.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
@@ -211,6 +212,8 @@ window.addEventListener('beforeunload', () => {
 });
 
 /** Right-click menu of a file in the Files tree or the Changes list. */
+const loadingOverlay = createLoadingOverlay();
+
 function openFileMenu(path, event) {
   openComparePicker(
     event.currentTarget,
@@ -660,8 +663,10 @@ function openFileFallback({ compare = false } = {}) {
  *   already surfaced its own error toast).
  */
 async function loadFileFromDisk(path, options = {}) {
+  loadingOverlay.show(deriveDisplayFileName(path));
   try {
     const contents = await tauriInvoke('read_json_file', { path });
+    await loadingOverlay.step(`Parsing ${formatBytes(utf8ByteLength(contents))}…`);
     if (!docs.openFile(path, contents, options)) {
       toast.showToast('That file is the active tab; pick another one to compare with.', 'info');
       return false;
@@ -671,6 +676,8 @@ async function loadFileFromDisk(path, options = {}) {
   } catch (err) {
     toast.showToast(`Could not open ${path}: ${err}`, 'error');
     return false;
+  } finally {
+    loadingOverlay.hide();
   }
 }
 

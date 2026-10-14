@@ -211,9 +211,9 @@ window.addEventListener('beforeunload', () => {
   docs.flushDrafts();
 });
 
-/** Right-click menu of a file in the Files tree or the Changes list. */
 const loadingOverlay = createLoadingOverlay();
 
+/** Right-click menu of a file in the Files tree or the Changes list. */
 function openFileMenu(path, event) {
   openComparePicker(
     event.currentTarget,

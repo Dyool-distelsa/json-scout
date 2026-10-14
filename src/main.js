@@ -50,6 +50,14 @@ import { isCopyable, copyText } from './ui/clipboard.js';
 import { describePasteSuccess, PASTE_FAILURE_MESSAGE } from './ui/pasteRules.js';
 
 const DERIVED_REFRESH_DEBOUNCE_MS = 250;
+/** Above this many characters an edit waits longer before re-parsing. */
+const LARGE_DOCUMENT_CHARS = 5_000_000;
+const LARGE_DOCUMENT_DEBOUNCE_MS = 1000;
+
+/** A pause long enough to re-parse the active document without stalling typing. */
+function derivedRefreshDelay() {
+  return editor.getState().doc.length > LARGE_DOCUMENT_CHARS ? LARGE_DOCUMENT_DEBOUNCE_MS : DERIVED_REFRESH_DEBOUNCE_MS;
+}
 
 initTheme();
 
@@ -293,7 +301,7 @@ function computeDerivedState() {
   refreshDerivedPanels(parseResult);
 }
 
-const debouncedComputeDerivedState = debounce(computeDerivedState, DERIVED_REFRESH_DEBOUNCE_MS);
+const debouncedComputeDerivedState = debounce(computeDerivedState, derivedRefreshDelay);
 const debouncedRefreshSecondaryPanels = debounce(
   () => refreshDerivedPanels(),
   DERIVED_REFRESH_DEBOUNCE_MS

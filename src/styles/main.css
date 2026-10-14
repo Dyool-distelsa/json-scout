@@ -193,6 +193,23 @@ textarea {
   background: transparent;
 }
 
+/* The editor's scrollbars are dragged through long documents: a little
+   wider than the thin default elsewhere, so they are easier to grab. */
+.cm-scroller {
+  scrollbar-width: auto;
+}
+
+.cm-scroller::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+.cm-scroller::-webkit-scrollbar-thumb,
+.cm-scroller::-webkit-scrollbar-thumb:hover {
+  border-width: 3px;
+  min-height: 40px;
+}
+
 /* Shared keyboard focus ring: one recipe for every interactive control. The
    default UA outline is suppressed only for mouse focus; :focus-visible
    always draws the ring. */

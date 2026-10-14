@@ -20,6 +20,9 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
   // of the background snapping between tabs. It is placed without a
   // transition the first time (so it does not sweep in from the left), and
   // re-placed on resize since tab widths are fluid.
+  /** Stats input that arrived while the Stats tab was hidden. */
+  let pendingStats = null;
+
   const indicator = document.createElement('span');
   indicator.className = 'tab-indicator';
   indicator.setAttribute('aria-hidden', 'true');
@@ -43,6 +46,11 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
       Object.values(panels).forEach((p) => p.classList.remove('active'));
       tab.classList.add('active');
       panels[tab.dataset.tab]?.classList.add('active');
+      if (tab.dataset.tab === 'stats' && pendingStats) {
+        const [text, parseResult] = pendingStats;
+        pendingStats = null;
+        renderStats(text, parseResult);
+      }
       placeIndicator();
     });
   });
@@ -198,6 +206,13 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
    */
   function renderStats(text, parseResult) {
     const panel = panels.stats;
+    // Walking every value of a large document is wasted while Stats is not
+    // the tab shown: remember the input and render on the next visit.
+    if (!panel.classList.contains('active')) {
+      pendingStats = [text, parseResult];
+      return;
+    }
+    pendingStats = null;
     // Animate the entrance only when stats were not already on screen; a
     // rebuild during typing must not replay the animation.
     const alreadyShowingStats = panel.querySelector('.stats-grid') !== null;

@@ -27,15 +27,15 @@ describe('compareChoices', () => {
 
 describe('fileChoices', () => {
   it('offers Open and Compare for a file other than the active tab', () => {
-    expect(fileChoices('C:/p/b.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open', 'compare']);
+    expect(fileChoices('C:/p/b.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open', 'compare', 'separator', 'duplicate', 'rename']);
   });
 
   it('offers Compare when no file tab is active', () => {
-    expect(fileChoices('C:/p/b.json', null).map((c) => c.kind)).toEqual(['open', 'compare']);
+    expect(fileChoices('C:/p/b.json', null).map((c) => c.kind)).toEqual(['open', 'compare', 'separator', 'duplicate', 'rename']);
   });
 
   it('leaves out Compare for the active tab itself', () => {
-    expect(fileChoices('C:/p/a.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open']);
+    expect(fileChoices('C:/p/a.json', 'C:/p/a.json').map((c) => c.kind)).toEqual(['open', 'separator', 'duplicate', 'rename']);
   });
 });
 

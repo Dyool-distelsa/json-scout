@@ -2723,3 +2723,18 @@ button.danger:hover {
   width: min(620px, 100%);
   max-height: min(80vh, 100%);
 }
+
+/* Name prompt (Files panel: new file, rename) */
+.name-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 320px;
+}
+
+.name-dialog__error {
+  min-height: 1.2em;
+  margin-top: 6px;
+  color: var(--color-error);
+  font-size: 12px;
+}

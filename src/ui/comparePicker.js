@@ -25,16 +25,17 @@ export function compareChoices(tabs, activeId, compareId) {
 }
 
 /**
- * What right-clicking a file in the Files panel offers: open it, and compare
- * it with the active tab unless it is the active tab. Pure, so it is unit
- * tested.
+ * What right-clicking a file in the Files panel offers: open it, compare it
+ * with the active tab unless it is the active tab, then duplicate or rename
+ * it. Pure, so it is unit tested.
  * @param {string} path the clicked file
  * @param {string|null} activePath the active tab's file, if any
- * @returns {Array<{ kind: 'open'|'compare', label: string }>}
+ * @returns {Array<{ kind: 'open'|'compare'|'duplicate'|'rename', label: string } | { kind: 'separator' }>}
  */
 export function fileChoices(path, activePath) {
   const items = [{ kind: 'open', label: 'Open' }];
   if (path !== activePath) items.push({ kind: 'compare', label: 'Compare with active tab' });
+  items.push({ kind: 'separator' }, { kind: 'duplicate', label: 'Duplicate' }, { kind: 'rename', label: 'Rename…' });
   return items;
 }
 

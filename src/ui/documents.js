@@ -8,6 +8,7 @@ import {
   activate,
   closeTab,
   updateTab,
+  baseName,
   markSaved,
   cycle,
 } from './tabs.js';
@@ -393,6 +394,29 @@ export function createDocuments({
       state = markSaved(state, tab.id, path);
       render();
       onActiveChange(activeTab(state));
+    },
+    /**
+     * A file or folder was renamed on disk: tabs of `from` (or of files
+     * inside it) follow it to `to`.
+     */
+    retarget(from, to) {
+      const moved = (path) => path === from || path?.startsWith(`${from}\\`) || path?.startsWith(`${from}/`);
+      if (!state.tabs.some((t) => moved(t.path))) return;
+      for (const tab of state.tabs.filter((t) => moved(t.path))) {
+        const path = to + tab.path.slice(from.length);
+        state = updateTab(state, tab.id, { path, title: baseName(path) });
+      }
+      render();
+      onActiveChange(activeTab(state));
+    },
+    /** `path` changed on disk: a clean tab of it shows `contents`, without being activated. */
+    reloadClean(path, contents) {
+      const tab = state.tabs.find((t) => t.path === path);
+      if (!tab || tab.dirty) return;
+      const next = editor.createState(contents);
+      if (tab.id === state.activeId) editor.setState(next);
+      else if (tab.id === compareId) compareEditor.setState(next);
+      else stashed.set(tab.id, next);
     },
     active: () => activeTab(state),
     tabs: () => state.tabs,

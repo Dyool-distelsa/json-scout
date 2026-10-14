@@ -262,6 +262,78 @@ pub fn scan_dir_tree(path: String) -> Result<DirTree, String> {
     Ok(DirTree { root, truncated })
 }
 
+/// Create a new file with `contents`, refusing to replace one that exists.
+/// Backs "New JSON file" and "Duplicate" in the Files panel.
+#[tauri::command]
+pub fn create_json_file(path: String, contents: String) -> Result<(), String> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| format!("Failed to create '{}': {}", path, e))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|e| format!("Failed to write '{}': {}", path, e))
+}
+
+/// Rename (move) a file or folder, refusing to replace an existing entry.
+/// A change of letter case only (`a.json` -> `A.json`) is allowed, since on
+/// a case-insensitive file system the "existing" target is the source itself.
+#[tauri::command]
+pub fn rename_path(from: String, to: String) -> Result<(), String> {
+    let same_entry = from.to_lowercase() == to.to_lowercase();
+    if !same_entry && Path::new(&to).exists() {
+        return Err(format!("'{}' already exists", to));
+    }
+    fs::rename(&from, &to).map_err(|e| format!("Failed to rename '{}': {}", from, e))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransformFailure {
+    pub path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TransformReport {
+    pub changed: usize,
+    pub unchanged: usize,
+    pub failed: Vec<TransformFailure>,
+}
+
+fn transform_text(op: &str, text: &str) -> Result<String, String> {
+    use crate::vault::json_text;
+    let result = match op {
+        "format" => json_text::pretty(text),
+        "minify" => json_text::minify(text),
+        "sort" => json_text::sorted_minify(text).and_then(|sorted| json_text::pretty(&sorted)),
+        other => return Err(format!("Unknown operation '{}'", other)),
+    };
+    result.map_err(|e| e.to_string())
+}
+
+/// Format, minify or sort the keys of each file in `paths`, in place.
+/// Scalars are kept exactly as written (no number rounding). A file that is
+/// not valid JSON is left untouched and reported; the others still run.
+#[tauri::command]
+pub fn transform_json_files(paths: Vec<String>, op: String) -> Result<TransformReport, String> {
+    let mut report = TransformReport::default();
+    for path in paths {
+        let outcome = read_json_file(path.clone()).and_then(|text| {
+            let next = transform_text(&op, &text)?;
+            if next == text {
+                return Ok(false);
+            }
+            write_json_file(path.clone(), next).map(|_| true)
+        });
+        match outcome {
+            Ok(true) => report.changed += 1,
+            Ok(false) => report.unchanged += 1,
+            Err(error) => report.failed.push(TransformFailure { path, error }),
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,5 +534,64 @@ mod tests {
             format_bytes(MAX_READ_BYTES)
         );
         assert_eq!(msg, "File is 312.5 MB, which exceeds the 64 MB limit");
+    }
+
+    #[test]
+    fn create_json_file_refuses_to_replace_an_existing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("new.json").to_string_lossy().to_string();
+        create_json_file(path.clone(), "{}".into()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
+        assert!(create_json_file(path.clone(), "[]".into()).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
+    }
+
+    #[test]
+    fn rename_path_moves_files_and_folders_but_never_over_an_existing_entry() {
+        let dir = tempdir().unwrap();
+        let a = dir.path().join("a.json");
+        let b = dir.path().join("b.json");
+        fs::write(&a, "1").unwrap();
+        fs::write(&b, "2").unwrap();
+        let s = |p: &Path| p.to_string_lossy().to_string();
+        assert!(rename_path(s(&a), s(&b)).is_err());
+        assert_eq!(fs::read_to_string(&b).unwrap(), "2");
+
+        let c = dir.path().join("c.json");
+        rename_path(s(&a), s(&c)).unwrap();
+        assert!(!a.exists() && c.exists());
+
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let moved = dir.path().join("renamed");
+        rename_path(s(&sub), s(&moved)).unwrap();
+        assert!(moved.is_dir());
+    }
+
+    #[test]
+    fn transform_json_files_rewrites_valid_files_and_reports_the_rest() {
+        let dir = tempdir().unwrap();
+        let ok = dir.path().join("ok.json");
+        let same = dir.path().join("same.json");
+        let bad = dir.path().join("bad.json");
+        fs::write(&ok, "{\"b\": 1, \"a\": 12345678901234567890}").unwrap();
+        fs::write(&same, "[1]").unwrap();
+        fs::write(&bad, "{nope").unwrap();
+        let paths = [&ok, &same, &bad].iter().map(|p| p.to_string_lossy().to_string()).collect();
+
+        let report = transform_json_files(paths, "minify".into()).unwrap();
+        assert_eq!((report.changed, report.unchanged, report.failed.len()), (1, 1, 1));
+        assert_eq!(fs::read_to_string(&ok).unwrap(), "{\"b\":1,\"a\":12345678901234567890}");
+        assert_eq!(fs::read_to_string(&bad).unwrap(), "{nope");
+
+        transform_json_files(vec![ok.to_string_lossy().to_string()], "sort".into()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&ok).unwrap(),
+            "{
+  \"a\": 12345678901234567890,
+  \"b\": 1
+}
+"
+        );
     }
 }

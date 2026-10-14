@@ -1,6 +1,17 @@
 import { buildTree } from '../tools/tree.js';
 import { computeStatsFromValue } from '../tools/stats.js';
 import { queryJson } from '../tools/query.js';
+import { isMongoQuery, mongoFind } from '../tools/mongoQuery.js';
+
+/** Most query results drawn; a 100 MB document can match millions. */
+const MAX_QUERY_RESULTS = 500;
+
+function describeMongoCount(count, returned, shown) {
+  const docs = `${count} document${count === 1 ? '' : 's'} matched`;
+  if (shown < returned) return `${docs} (showing ${shown})`;
+  if (returned < count) return `${docs} (${returned} returned)`;
+  return docs;
+}
 import { diffJson, describeDiff } from '../tools/diff.js';
 import { jsonToYaml, yamlToJson, jsonToCsv } from '../tools/convert.js';
 import { formatBytes } from '../tools/jsonUtils.js';
@@ -291,34 +302,54 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
     const panel = panels.query;
     if (!queryPanelBuilt) {
       panel.innerHTML = '';
-      const input = document.createElement('input');
+      const input = document.createElement('textarea');
       input.className = 'query-input';
-      input.type = 'text';
-      input.placeholder = 'JSONPath ($..author, $..[?(@.a.b==1)]) or a key name';
+      input.rows = 3;
+      input.spellcheck = false;
+      input.placeholder =
+        '{ age: { $gt: 30 }, "address.city": /lima/i }, { name: 1 }\n.sort({ age: -1 }).limit(20)\n\nor JSONPath: $..author';
+      const summary = document.createElement('div');
+      summary.className = 'query-summary';
       const results = document.createElement('div');
       results.className = 'query-results';
       const run = () => {
         const expr = input.value.trim();
+        summary.textContent = '';
         if (!expr) {
           results.textContent = '';
           return;
         }
         try {
           const parsed = JSON.parse(getText());
-          const matches = queryJson(parsed, expr);
-          results.textContent = JSON.stringify(
-            matches.map((m) => ({ path: m.path, value: m.value })),
-            null,
-            2
-          );
+          if (isMongoQuery(expr)) {
+            const { results: docs, count } = mongoFind(parsed, expr);
+            const shown = docs.slice(0, MAX_QUERY_RESULTS);
+            summary.textContent = describeMongoCount(count, docs.length, shown.length);
+            results.textContent = shown.map((d) => `// ${d.path}\n${JSON.stringify(d.value, null, 2)}`).join('\n\n');
+          } else {
+            const matches = queryJson(parsed, expr);
+            const shown = matches.slice(0, MAX_QUERY_RESULTS);
+            summary.textContent =
+              shown.length < matches.length ? `${matches.length} matches (showing ${shown.length})` : `${matches.length} matches`;
+            results.textContent = JSON.stringify(
+              shown.map((m) => ({ path: m.path, value: m.value })),
+              null,
+              2
+            );
+          }
         } catch (err) {
           results.textContent = `Error: ${err.message}`;
         }
       };
       input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') run();
+        // Enter runs; Shift+Enter adds a line for a longer query.
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          run();
+        }
       });
       panel.appendChild(input);
+      panel.appendChild(summary);
       panel.appendChild(results);
       queryPanelBuilt = true;
     }

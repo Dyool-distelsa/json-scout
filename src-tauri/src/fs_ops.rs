@@ -22,9 +22,9 @@ fn decode_lossy(bytes: Vec<u8>) -> String {
 /// Largest file `read_json_file` will pull into memory. The whole file is
 /// held as text, shipped over IPC, and re-parsed on every keystroke, so an
 /// arbitrarily large `.json` picked from the Explorer context menu would
-/// exhaust memory or freeze the UI. 64 MiB is far above any hand-edited
-/// JSON while still refusing multi-hundred-megabyte log dumps.
-const MAX_READ_BYTES: u64 = 64 * 1024 * 1024;
+/// exhaust memory or freeze the UI. 512 MiB covers the large exports people
+/// do open (well past 128 MB) while still refusing gigabyte-sized dumps.
+const MAX_READ_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Format a byte count as a short human-readable string ("312.4 MB",
 /// "64 MB", "900 B"). A trailing ".0" is dropped so whole values read
@@ -425,8 +425,8 @@ mod tests {
     }
 
     #[test]
-    fn max_read_bytes_is_64_mib() {
-        assert_eq!(MAX_READ_BYTES, 67_108_864);
+    fn max_read_bytes_is_512_mib() {
+        assert_eq!(MAX_READ_BYTES, 536_870_912);
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(format_bytes(900), "900 B");
         assert_eq!(format_bytes(1024), "1 KB");
         assert_eq!(format_bytes(1536), "1.5 KB");
-        assert_eq!(format_bytes(MAX_READ_BYTES), "64 MB");
+        assert_eq!(format_bytes(MAX_READ_BYTES), "512 MB");
         assert_eq!(format_bytes(327_664_435), "312.5 MB");
         assert_eq!(format_bytes(2 * 1024 * 1024 * 1024), "2 GB");
     }
@@ -455,12 +455,12 @@ mod tests {
 
     #[test]
     fn read_json_file_reports_the_size_and_limit_when_too_large() {
-        // Exercises the message shape without materializing a 64 MiB file.
+        // Exercises the message shape without materializing a 512 MiB file.
         let msg = format!(
             "File is {}, which exceeds the {} limit",
-            format_bytes(327_664_435),
+            format_bytes(1_181_116_006),
             format_bytes(MAX_READ_BYTES)
         );
-        assert_eq!(msg, "File is 312.5 MB, which exceeds the 64 MB limit");
+        assert_eq!(msg, "File is 1.1 GB, which exceeds the 512 MB limit");
     }
 }

@@ -26,15 +26,21 @@ export function compareChoices(tabs, activeId, compareId) {
 
 /**
  * What right-clicking a file in the Files panel offers: open it, and compare
- * it with the active tab unless it is the active tab. Pure, so it is unit
- * tested.
+ * it with the active tab unless it is the active tab. A file in the Changes
+ * list also offers Show Changes, and only that once it is deleted. Pure, so
+ * it is unit tested.
  * @param {string} path the clicked file
  * @param {string|null} activePath the active tab's file, if any
- * @returns {Array<{ kind: 'open'|'compare', label: string }>}
+ * @param {{ changeKind?: string }} [options] set for a file in the Changes list
+ * @returns {Array<{ kind: 'changes'|'open'|'compare'|'duplicate'|'rename', label: string } | { kind: 'separator' }>}
  */
-export function fileChoices(path, activePath) {
-  const items = [{ kind: 'open', label: 'Open' }];
+export function fileChoices(path, activePath, { changeKind } = {}) {
+  const items = [];
+  if (changeKind) items.push({ kind: 'changes', label: 'Show Changes' });
+  if (changeKind === 'deleted') return items;
+  items.push({ kind: 'open', label: 'Open' });
   if (path !== activePath) items.push({ kind: 'compare', label: 'Compare with active tab' });
+  items.push({ kind: 'separator' }, { kind: 'duplicate', label: 'Duplicate' }, { kind: 'rename', label: 'Rename…' });
   return items;
 }
 

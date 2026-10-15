@@ -11,7 +11,28 @@ import { parseJsonStrict, JsonSyntaxError } from './jsonParser.js';
  * @returns {{ valid: true, value: * } | { valid: false, error: { message: string, line: number, column: number } }}
  */
 export function parseDocument(text) {
-  const cleaned = stripBOM(text ?? '');
+  const source = text ?? '';
+  // The status bar, the side panels and the editor's linter all ask about
+  // the same text after an edit; a 100 MB document should parse once.
+  if (lastParse && lastParse.text === source) return lastParse.result;
+  const result = parseUncached(source);
+  lastParse = { text: source, result };
+  return result;
+}
+
+/** @type {{ text: string, result: ReturnType<typeof parseDocument> } | null} */
+let lastParse = null;
+
+function parseUncached(text) {
+  const cleaned = stripBOM(text);
+  try {
+    // The engine's native parser is many times faster than the strict one
+    // and accepts exactly valid JSON; the strict parser only runs to locate
+    // and explain an error.
+    return { valid: true, value: JSON.parse(cleaned) };
+  } catch {
+    // Fall through to the strict parser for a precise message.
+  }
   try {
     const value = parseJsonStrict(cleaned);
     return { valid: true, value };

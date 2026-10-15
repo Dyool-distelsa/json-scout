@@ -3,7 +3,24 @@ import { createEditor } from './ui/editor.js';
 import { createToolbar } from './ui/toolbar.js';
 import { createStatusBar } from './ui/statusbar.js';
 import { createSidebar } from './ui/sidebar.js';
+import {
+  bulkSummary,
+  bulkTitle,
+  duplicateName,
+  entryName,
+  filesUnder,
+  findDir,
+  folderChoices,
+  joinPath,
+  nameProblem,
+  namesIn,
+  parentDir,
+  withJsonExtension,
+} from './ui/fileActions.js';
+import { promptName, confirmAction } from './ui/fileDialogs.js';
+import { createLoadingOverlay } from './ui/loadingOverlay.js';
 import { createChangesPanel } from './ui/changesPanel.js';
+import { openChangeDiffDialog } from './ui/changeDiffDialog.js';
 import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { openSettingsDialog, openHelpDialog } from './ui/appDialogs.js';
@@ -50,6 +67,14 @@ import { isCopyable, copyText } from './ui/clipboard.js';
 import { describePasteSuccess, PASTE_FAILURE_MESSAGE } from './ui/pasteRules.js';
 
 const DERIVED_REFRESH_DEBOUNCE_MS = 250;
+/** Above this many characters an edit waits longer before re-parsing. */
+const LARGE_DOCUMENT_CHARS = 5_000_000;
+const LARGE_DOCUMENT_DEBOUNCE_MS = 1000;
+
+/** A pause long enough to re-parse the active document without stalling typing. */
+function derivedRefreshDelay() {
+  return editor.getState().doc.length > LARGE_DOCUMENT_CHARS ? LARGE_DOCUMENT_DEBOUNCE_MS : DERIVED_REFRESH_DEBOUNCE_MS;
+}
 
 initTheme();
 
@@ -210,17 +235,167 @@ window.addEventListener('beforeunload', () => {
   docs.flushDrafts();
 });
 
-/** Right-click menu of a file in the Files tree or the Changes list. */
-function openFileMenu(path, event) {
+const loadingOverlay = createLoadingOverlay();
+
+/**
+ * Right-click menu of a file or folder in the Files tree (`target` is 'file'
+ * or 'dir'), or of an entry in the Changes list (`target` is the change).
+ */
+function openFileMenu(path, event, target = 'file') {
+  const point = { left: event.clientX, top: event.clientY };
+  if (target === 'dir') {
+    openComparePicker(event.currentTarget, folderChoices(), (choice) => runFolderAction(choice.kind, path), {
+      heading: entryName(path),
+      point,
+    });
+    return;
+  }
+  const change = typeof target === 'object' ? target : null;
   openComparePicker(
     event.currentTarget,
-    fileChoices(path, docs.active()?.path ?? null),
+    fileChoices(path, docs.active()?.path ?? null, { changeKind: change?.kind }),
     (choice) => {
-      if (choice.kind === 'open') loadFileFromDisk(path);
+      if (choice.kind === 'changes') showChange(change);
+      else if (choice.kind === 'open') loadFileFromDisk(path);
       else if (choice.kind === 'compare') loadFileFromDisk(path, { compare: true });
+      else if (choice.kind === 'duplicate') duplicateFile(path);
+      else if (choice.kind === 'rename') renameEntry(path, 'file');
     },
-    { heading: path.split(/[\\/]/).pop(), point: { left: event.clientX, top: event.clientY } }
+    { heading: entryName(path), point }
   );
+}
+
+/** Names already used next to `path` (in the scanned tree). */
+function siblingNames(dir) {
+  const node = fileTree && findDir(fileTree.root, dir);
+  return node ? namesIn(node) : [];
+}
+
+/** Rescan the opened folder after a change on disk. */
+async function refreshFolder() {
+  if (state.currentDir) await loadDirectory(state.currentDir, { reveal: false });
+}
+
+async function duplicateFile(path) {
+  const dir = parentDir(path);
+  const target = joinPath(dir, duplicateName(entryName(path), siblingNames(dir)));
+  try {
+    const contents = await tauriInvoke('read_json_file', { path });
+    await tauriInvoke('create_json_file', { path: target, contents });
+    await refreshFolder();
+    toast.showToast(`Created ${entryName(target)}`, 'success');
+  } catch (err) {
+    toast.showToast(`Could not duplicate ${entryName(path)}: ${err}`, 'error');
+  }
+}
+
+async function renameEntry(path, kind) {
+  const dir = parentDir(path);
+  const current = entryName(path);
+  const taken = siblingNames(dir);
+  const name = await promptName({
+    title: kind === 'dir' ? 'Rename folder' : 'Rename file',
+    label: 'New name',
+    initial: current,
+    confirmLabel: 'Rename',
+    selectStem: kind === 'file',
+    validate: (value) => nameProblem(kind === 'file' && value ? withJsonExtension(value) : value, taken, current),
+  });
+  if (name === null) return;
+  const finalName = kind === 'file' ? withJsonExtension(name) : name;
+  if (finalName === current) return;
+  const target = joinPath(dir, finalName);
+  try {
+    await tauriInvoke('rename_path', { from: path, to: target });
+    docs.retarget(path, target);
+    if (kind === 'dir') sidebar.renameExpanded(path, target);
+    await refreshFolder();
+  } catch (err) {
+    toast.showToast(`Could not rename ${current}: ${err}`, 'error');
+  }
+}
+
+async function newJsonFile(dir) {
+  const taken = siblingNames(dir);
+  const name = await promptName({
+    title: 'New JSON file',
+    label: `File name in ${entryName(dir)}`,
+    initial: 'untitled.json',
+    confirmLabel: 'Create',
+    selectStem: true,
+    validate: (value) => nameProblem(value && withJsonExtension(value), taken),
+  });
+  if (name === null) return;
+  const target = joinPath(dir, withJsonExtension(name));
+  try {
+    await tauriInvoke('create_json_file', { path: target, contents: '{}\n' });
+    await refreshFolder();
+    await loadFileFromDisk(target);
+  } catch (err) {
+    toast.showToast(`Could not create ${entryName(target)}: ${err}`, 'error');
+  }
+}
+
+/** Format, minify or sort the keys of every JSON file under `dir`. */
+async function transformFolder(dir, op) {
+  const node = fileTree && findDir(fileTree.root, dir);
+  const all = node ? filesUnder(node) : [];
+  // A file with unsaved edits in a tab is left alone: saving would undo it.
+  const unsaved = new Set(docs.unsavedFiles());
+  const paths = all.filter((p) => !unsaved.has(p));
+  if (all.length === 0) {
+    toast.showToast('No JSON files in this folder', 'info');
+    return;
+  }
+  const confirmed = await confirmAction({
+    title: bulkTitle(op, all.length, entryName(dir)),
+    message: 'Each file is rewritten in place, subfolders included. Files that are not valid JSON are left as they are.',
+    confirmLabel: 'Apply',
+  });
+  if (!confirmed) return;
+  try {
+    const report = await tauriInvoke('transform_json_files', { paths, op });
+    const failed = new Set(report.failed.map((f) => f.path));
+    const open = new Set(docs.tabs().map((t) => t.path));
+    for (const path of paths) {
+      if (open.has(path) && !failed.has(path)) {
+        docs.reloadClean(path, await tauriInvoke('read_json_file', { path }));
+      }
+    }
+    refreshDerivedPanels();
+    await refreshFolder();
+    const summary = bulkSummary(op, report, all.length - paths.length);
+    toast.showToast(summary, report.failed.length ? 'info' : 'success');
+  } catch (err) {
+    toast.showToast(`Could not update ${entryName(dir)}: ${err}`, 'error');
+  }
+}
+
+function runFolderAction(kind, dir) {
+  if (kind === 'new-file') newJsonFile(dir);
+  else if (kind === 'rename') renameEntry(dir, 'dir');
+  else transformFolder(dir, kind);
+}
+
+/** The opened folder's last scan, for the Files panel actions. */
+let fileTree = null;
+
+/**
+ * Show what changed in a file of the Changes list since the last commit:
+ * the committed text against the one on disk, with every value visible.
+ * @param {import('./ui/changesPanel.js').Change} change
+ */
+async function showChange(change) {
+  const dir = state.currentDir;
+  try {
+    const [baseText, workingText] = await Promise.all([
+      change.head ? tauriInvoke('git_head_text', { dir, head: change.head }) : '',
+      change.kind === 'deleted' ? '' : tauriInvoke('read_json_file', { path: change.path }),
+    ]);
+    openChangeDiffDialog({ change, baseText, workingText, onOpen: () => loadFileFromDisk(change.path) });
+  } catch (err) {
+    toast.showToast(`Could not show the changes of ${change.relative}: ${err}`, 'error');
+  }
 }
 
 const sidebar = createSidebar(document.getElementById('sidebar-list'), (path) => loadFileFromDisk(path), openFileMenu);
@@ -228,8 +403,8 @@ const sidebar = createSidebar(document.getElementById('sidebar-list'), (path) =>
 // Git changes of the opened folder, under the Files tree (desktop app only).
 const changesPanel = createChangesPanel(document.getElementById('sidebar-changes'), {
   load: (dir) => (isTauriRuntime() ? tauriInvoke('git_changed_json', { path: dir }) : Promise.resolve(null)),
-  onSelect: (path) => loadFileFromDisk(path),
-  onContextMenu: openFileMenu,
+  onShow: showChange,
+  onContextMenu: (change, event) => openFileMenu(change.path, event, change),
 });
 
 async function tauriInvoke(command, args) {
@@ -293,7 +468,7 @@ function computeDerivedState() {
   refreshDerivedPanels(parseResult);
 }
 
-const debouncedComputeDerivedState = debounce(computeDerivedState, DERIVED_REFRESH_DEBOUNCE_MS);
+const debouncedComputeDerivedState = debounce(computeDerivedState, derivedRefreshDelay);
 const debouncedRefreshSecondaryPanels = debounce(
   () => refreshDerivedPanels(),
   DERIVED_REFRESH_DEBOUNCE_MS
@@ -660,8 +835,10 @@ function openFileFallback({ compare = false } = {}) {
  *   already surfaced its own error toast).
  */
 async function loadFileFromDisk(path, options = {}) {
+  loadingOverlay.show(deriveDisplayFileName(path));
   try {
     const contents = await tauriInvoke('read_json_file', { path });
+    await loadingOverlay.step(`Parsing ${formatBytes(utf8ByteLength(contents))}…`);
     if (!docs.openFile(path, contents, options)) {
       toast.showToast('That file is the active tab; pick another one to compare with.', 'info');
       return false;
@@ -671,14 +848,21 @@ async function loadFileFromDisk(path, options = {}) {
   } catch (err) {
     toast.showToast(`Could not open ${path}: ${err}`, 'error');
     return false;
+  } finally {
+    loadingOverlay.hide();
   }
 }
 
-async function loadDirectory(dirPath) {
+async function loadDirectory(dirPath, { reveal = true } = {}) {
   try {
     const tree = await tauriInvoke('scan_dir_tree', { path: dirPath });
     state.currentDir = dirPath;
+    fileTree = tree;
     sidebar.setTree(tree);
+    if (!reveal) {
+      changesPanel.refresh();
+      return;
+    }
     changesPanel.setFolder(dirPath);
     showSidebarTab('files');
     sidebarCollapse.setCollapsed(false);

@@ -10,7 +10,8 @@
  *
  * @template {(...args: any[]) => void} F
  * @param {F} fn
- * @param {number} wait
+ * @param {number | (() => number)} wait milliseconds, or a function giving
+ *   them at each call (e.g. longer for a larger document)
  * @returns {F & { cancel: () => void, flush: () => void }}
  */
 export function debounce(fn, wait) {
@@ -33,7 +34,7 @@ export function debounce(fn, wait) {
     if (timerId !== null) {
       clearTimeout(timerId);
     }
-    timerId = setTimeout(invokePending, wait);
+    timerId = setTimeout(invokePending, typeof wait === 'function' ? wait() : wait);
   }
 
   debounced.cancel = function cancel() {

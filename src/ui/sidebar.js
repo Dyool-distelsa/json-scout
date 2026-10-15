@@ -4,8 +4,8 @@
  * the folder holding the active file is expanded so it stays visible.
  * @param {HTMLElement} container
  * @param {(path: string) => void} onSelect called with the file's full path
- * @param {(path: string, event: MouseEvent) => void} [onContextMenu] a file
- *   was right-clicked; the caller shows its menu
+ * @param {(path: string, event: MouseEvent, kind: 'file'|'dir') => void} [onContextMenu]
+ *   a file or folder was right-clicked; the caller shows its menu
  */
 export function createSidebar(container, onSelect, onContextMenu) {
   /** @type {{ root: TreeDir, truncated?: boolean } | null} */
@@ -65,6 +65,12 @@ export function createSidebar(container, onSelect, onContextMenu) {
       else expanded.add(dir.path);
       render();
     });
+    if (onContextMenu) {
+      row.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        onContextMenu(dir.path, event, 'dir');
+      });
+    }
     group.appendChild(row);
 
     if (open) {
@@ -104,7 +110,7 @@ export function createSidebar(container, onSelect, onContextMenu) {
     if (onContextMenu) {
       item.addEventListener('contextmenu', (event) => {
         event.preventDefault();
-        onContextMenu(file.path, event);
+        onContextMenu(file.path, event, 'file');
       });
     }
     return item;
@@ -132,10 +138,20 @@ export function createSidebar(container, onSelect, onContextMenu) {
   render();
 
   return {
+    /** Keep `from` expanded under its new path `to` after a folder rename. */
+    renameExpanded(from, to) {
+      for (const path of [...expanded]) {
+        if (path === from || path.startsWith(`${from}\\`) || path.startsWith(`${from}/`)) {
+          expanded.delete(path);
+          expanded.add(to + path.slice(from.length));
+        }
+      }
+    },
     /** @param {{ root: TreeDir, truncated?: boolean } | null} next */
     setTree(next) {
+      // A rescan of the same folder (after a rename, say) keeps what is open.
+      if (next?.root.path !== tree?.root.path) expanded.clear();
       tree = next;
-      expanded.clear();
       if (tree) {
         expanded.add(tree.root.path);
         if (activePath) revealPath(tree.root, activePath);

@@ -72,9 +72,30 @@ describe('createSidebar', () => {
     sidebar.setTree(TREE);
     const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     row(container, 'package.json').dispatchEvent(event);
-    expect(onContextMenu).toHaveBeenCalledWith('C:\\proj\\package.json', event);
+    expect(onContextMenu).toHaveBeenCalledWith('C:\\proj\\package.json', event, 'file');
     expect(event.defaultPrevented).toBe(true);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('reports a right-click on a folder without toggling it', () => {
+    const onContextMenu = vi.fn();
+    sidebar = createSidebar(container, onSelect, onContextMenu);
+    sidebar.setTree(TREE);
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row(container, 'config').dispatchEvent(event);
+    expect(onContextMenu).toHaveBeenCalledWith('C:\\proj\\config', event, 'dir');
+    expect(row(container, 'config').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps open folders across a rescan and a rename of the same root', () => {
+    sidebar.setTree(TREE);
+    row(container, 'config').click();
+    sidebar.renameExpanded('C:\\proj\\config', 'C:\\proj\\settings');
+    const renamed = structuredClone(TREE);
+    Object.assign(renamed.root.dirs[0], { name: 'settings', path: 'C:\\proj\\settings' });
+    renamed.root.dirs[0].files = [file('C:\\proj\\settings', 'dev.json')];
+    sidebar.setTree(renamed);
+    expect(names(container)).toContain('dev.json');
   });
 
   it('says when the folder has no JSON files or was cut short', () => {

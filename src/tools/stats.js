@@ -29,6 +29,20 @@ function walk(value, depth, acc) {
   }
 }
 
+/** Lines in `text` (CRLF, CR or LF breaks), without building an array of them. */
+function countLines(text) {
+  let lines = 1;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code === 10) lines += 1;
+    else if (code === 13) {
+      lines += 1;
+      if (text.charCodeAt(i + 1) === 10) i += 1;
+    }
+  }
+  return lines;
+}
+
 function computeStatsCore(parsed, cleaned) {
   const byteSize = utf8ByteLength(cleaned);
   const lineCount = cleaned.split(/\r\n|\r|\n/).length;

@@ -16,6 +16,8 @@ import {
   namesIn,
   parentDir,
   withJsonExtension,
+  withKeptExtension,
+  withMarkdownExtension,
 } from './ui/fileActions.js';
 import { promptName, confirmAction } from './ui/fileDialogs.js';
 import { createLoadingOverlay } from './ui/loadingOverlay.js';
@@ -65,6 +67,15 @@ import { isTauriRuntime, deriveDisplayFileName } from './ui/runtime.js';
 import { debounce } from './ui/debounce.js';
 import { isCopyable, copyText } from './ui/clipboard.js';
 import { describePasteSuccess, PASTE_FAILURE_MESSAGE } from './ui/pasteRules.js';
+import {
+  defaultFileName,
+  dialogFilters,
+  guessKind,
+  kindForPath,
+  kindLabel,
+  resolveMarkdownView,
+} from './ui/docKind.js';
+import { renderMarkdown, markdownOutline, markdownStats } from './tools/markdown.js';
 
 const DERIVED_REFRESH_DEBOUNCE_MS = 250;
 /** Above this many characters an edit waits longer before re-parsing. */
@@ -78,12 +89,34 @@ function derivedRefreshDelay() {
 
 initTheme();
 
+const MARKDOWN_VIEW_KEY = 'json-scout.markdownView';
+
 const state = {
   currentPath: null,
   currentDir: null,
   indent: 2,
   diffMode: false,
+  /** Kind of the active document: decides tools, panels and the preview. */
+  kind: 'json',
+  /** How Markdown documents are shown: source, preview, or both. */
+  markdownView: resolveMarkdownView(readSetting(MARKDOWN_VIEW_KEY)),
 };
+
+function readSetting(key) {
+  try {
+    return globalThis.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSetting(key, value) {
+  try {
+    globalThis.localStorage?.setItem(key, value);
+  } catch {
+    // Site data blocked: the choice lasts until the app closes.
+  }
+}
 
 const toast = mountToastContainer(document.getElementById('toast-container'));
 
@@ -147,6 +180,7 @@ function onCompareDocumentChange(tab) {
   document
     .querySelector('[data-action="diffToggle"]')
     ?.setAttribute('aria-pressed', String(state.diffMode));
+  applyMarkdownView();
   // A discrete action, not a keystroke burst: reflect it immediately.
   refreshDerivedPanels();
 }
@@ -177,7 +211,7 @@ async function openCompareFile() {
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      filters: dialogFilters(state.kind),
     });
     if (!selected) return;
     await loadFileFromDisk(selected, { compare: true });
@@ -299,10 +333,10 @@ async function renameEntry(path, kind) {
     initial: current,
     confirmLabel: 'Rename',
     selectStem: kind === 'file',
-    validate: (value) => nameProblem(kind === 'file' && value ? withJsonExtension(value) : value, taken, current),
+    validate: (value) => nameProblem(kind === 'file' && value ? withKeptExtension(value, current) : value, taken, current),
   });
   if (name === null) return;
-  const finalName = kind === 'file' ? withJsonExtension(name) : name;
+  const finalName = kind === 'file' ? withKeptExtension(name, current) : name;
   if (finalName === current) return;
   const target = joinPath(dir, finalName);
   try {
@@ -315,20 +349,24 @@ async function renameEntry(path, kind) {
   }
 }
 
-async function newJsonFile(dir) {
+/** @param {import('./ui/docKind.js').DocKind} kind */
+async function newFile(dir, kind = 'json') {
   const taken = siblingNames(dir);
+  const withExtension = kind === 'markdown' ? withMarkdownExtension : withJsonExtension;
   const name = await promptName({
-    title: 'New JSON file',
+    title: `New ${kindLabel(kind)} file`,
     label: `File name in ${entryName(dir)}`,
-    initial: 'untitled.json',
+    initial: defaultFileName(kind),
     confirmLabel: 'Create',
     selectStem: true,
-    validate: (value) => nameProblem(value && withJsonExtension(value), taken),
+    validate: (value) => nameProblem(value && withExtension(value), taken),
   });
   if (name === null) return;
-  const target = joinPath(dir, withJsonExtension(name));
+  const target = joinPath(dir, withExtension(name));
   try {
-    await tauriInvoke('create_json_file', { path: target, contents: '{}\n' });
+    const title = entryName(target).replace(/\.(md|markdown)$/i, '');
+    const contents = kind === 'markdown' ? `# ${title}\n` : '{}\n';
+    await tauriInvoke('create_json_file', { path: target, contents });
     await refreshFolder();
     await loadFileFromDisk(target);
   } catch (err) {
@@ -339,7 +377,7 @@ async function newJsonFile(dir) {
 /** Format, minify or sort the keys of every JSON file under `dir`. */
 async function transformFolder(dir, op) {
   const node = fileTree && findDir(fileTree.root, dir);
-  const all = node ? filesUnder(node) : [];
+  const all = node ? filesUnder(node).filter((p) => kindForPath(p) === 'json') : [];
   // A file with unsaved edits in a tab is left alone: saving would undo it.
   const unsaved = new Set(docs.unsavedFiles());
   const paths = all.filter((p) => !unsaved.has(p));
@@ -372,7 +410,8 @@ async function transformFolder(dir, op) {
 }
 
 function runFolderAction(kind, dir) {
-  if (kind === 'new-file') newJsonFile(dir);
+  if (kind === 'new-file') newFile(dir, 'json');
+  else if (kind === 'new-markdown') newFile(dir, 'markdown');
   else if (kind === 'rename') renameEntry(dir, 'dir');
   else transformFolder(dir, kind);
 }
@@ -442,6 +481,10 @@ function runTiming(fn) {
  */
 function refreshDerivedPanels(parseResult) {
   const text = editor.getContent();
+  if (state.kind === 'markdown') {
+    refreshMarkdownPanels(text);
+    return;
+  }
   const resolvedParse = parseResult ?? parseDocument(text);
   rightPanel.renderTree(text, resolvedParse);
   rightPanel.renderStats(text, resolvedParse);
@@ -461,11 +504,91 @@ function refreshDerivedPanels(parseResult) {
  */
 function computeDerivedState() {
   const text = editor.getContent();
+  if (state.kind === 'markdown') {
+    statusBar.setMarkdown(markdownStats(text).words);
+    statusBar.setByteSize(utf8ByteLength(text));
+    const { elapsed } = runTiming(() => refreshMarkdownPanels(text));
+    statusBar.setParseTime(elapsed);
+    return;
+  }
   const { result: parseResult, elapsed } = runTiming(() => parseDocument(text));
   statusBar.setValid(parseResult.valid, parseResult.valid ? '' : parseResult.error.message);
   statusBar.setByteSize(utf8ByteLength(text));
   statusBar.setParseTime(elapsed);
   refreshDerivedPanels(parseResult);
+}
+
+// --- Markdown documents ----------------------------------------------------
+const editorBody = document.querySelector('.editor-pane__body');
+const markdownPreview = document.getElementById('md-preview');
+
+/** Whether the rendered preview is on screen (Markdown, Split/Preview, not in Diff). */
+function previewShown() {
+  return state.kind === 'markdown' && !state.diffMode && state.markdownView !== 'raw';
+}
+
+/** Show the source, the preview or both, as the active document and view ask. */
+function applyMarkdownView() {
+  const shown = previewShown();
+  if (shown) editorBody.dataset.mdView = state.markdownView;
+  else delete editorBody.dataset.mdView;
+  markdownPreview.hidden = !shown;
+}
+
+/** Outline, preview and (in Diff mode) the line diff of a Markdown document. */
+function refreshMarkdownPanels(text) {
+  rightPanel.renderOutline(markdownOutline(text), goToHeading);
+  if (previewShown()) markdownPreview.innerHTML = renderMarkdown(text);
+  if (state.diffMode) rightPanel.renderTextDiff(text, secondaryEditor.getContent());
+}
+
+/** An Outline entry was picked: reveal that heading where the user is reading. */
+function goToHeading(line, index) {
+  if (state.markdownView === 'preview' && previewShown()) {
+    markdownPreview.querySelectorAll('h1, h2, h3, h4, h5, h6')[index]?.scrollIntoView({ block: 'start' });
+    return;
+  }
+  editor.goToLineColumn(line, 1);
+}
+
+// Links in the preview must not navigate the app window: web links open in
+// the browser, anything else (relative files, anchors) is ignored.
+markdownPreview.addEventListener('click', async (event) => {
+  const link = event.target.closest?.('a[href]');
+  if (!link) return;
+  event.preventDefault();
+  const href = link.getAttribute('href');
+  if (!/^https?:\/\//i.test(href)) return;
+  try {
+    if (isTauriRuntime()) {
+      const { openUrl } = await import('@tauri-apps/plugin-opener');
+      await openUrl(href);
+    } else {
+      window.open(href, '_blank', 'noopener');
+    }
+  } catch {
+    // The opener is only allowed the app's own repository: hand the link over instead.
+    if (await copyText(href)) toast.showToast(`Link copied: ${href}`, 'info');
+    else toast.showToast(`Could not open ${href}`, 'error');
+  }
+});
+
+// Split view: the preview follows the source as it scrolls.
+editor.view.scrollDOM.addEventListener('scroll', () => {
+  if (state.markdownView !== 'split' || !previewShown()) return;
+  const source = editor.view.scrollDOM;
+  const range = source.scrollHeight - source.clientHeight;
+  const ratio = range > 0 ? source.scrollTop / range : 0;
+  markdownPreview.scrollTop = ratio * (markdownPreview.scrollHeight - markdownPreview.clientHeight);
+});
+
+/** @param {import('./ui/docKind.js').MarkdownView} view */
+function setMarkdownView(view) {
+  state.markdownView = resolveMarkdownView(view);
+  writeSetting(MARKDOWN_VIEW_KEY, state.markdownView);
+  toolbar.setMarkdownView(state.markdownView);
+  applyMarkdownView();
+  if (previewShown()) markdownPreview.innerHTML = renderMarkdown(editor.getContent());
 }
 
 const debouncedComputeDerivedState = debounce(computeDerivedState, derivedRefreshDelay);
@@ -483,6 +606,13 @@ const debouncedRefreshSecondaryPanels = debounce(
  * @returns {string | null}
  */
 function handlePaste(text) {
+  // Pasting a whole Markdown document into an empty Untitled JSON tab: switch
+  // the tab to Markdown rather than reporting it as broken JSON.
+  const active = docs.active();
+  if (active?.path === null && editor.getContent() === '' && guessKind(text) === 'markdown') {
+    docs.setActiveKind('markdown');
+    return null;
+  }
   const result = processPastedJson(text, { indent: state.indent });
   if (!result.ok) {
     toast.showToast(PASTE_FAILURE_MESSAGE, 'error');
@@ -499,6 +629,10 @@ function handlePaste(text) {
  */
 function onActiveDocumentChange(tab) {
   state.currentPath = tab?.path ?? null;
+  state.kind = tab?.kind ?? 'json';
+  toolbar.setMode(state.kind);
+  rightPanel.setKind(state.kind);
+  applyMarkdownView();
   updateFileName(state.currentPath, tab?.title);
   sidebar.setActive(state.currentPath);
   changesPanel.setActive(state.currentPath);
@@ -610,6 +744,9 @@ function describeFormatGrowth(growth) {
   return `Formatted: ${formatBytes(growth.beforeBytes)} → ${formatBytes(growth.afterBytes)} (${growth.grownPercent.toFixed(1)}% larger)`;
 }
 
+/** Toolbar and shortcut actions that only make sense on a JSON document. */
+const JSON_ONLY_ACTIONS = ['format', 'minify', 'validate', 'repair', 'sortKeys', 'escape', 'unescape'];
+
 const handlers = {
   format: () =>
     withToastOnError(() => {
@@ -698,7 +835,20 @@ const handlers = {
   closeTab: () => docs.requestClose(),
   nextTab: () => docs.cycle(1),
   prevTab: () => docs.cycle(-1),
+  modeChange: (kind) => docs.setActiveKind(kind),
+  markdownViewChange: (view) => setMarkdownView(view),
 };
+
+for (const action of JSON_ONLY_ACTIONS) {
+  const run = handlers[action];
+  handlers[action] = (...args) => {
+    if (state.kind !== 'json') {
+      toast.showToast(`${kindLabel(state.kind)} document: switch the mode to JSON to use this tool.`, 'info');
+      return;
+    }
+    run(...args);
+  };
+}
 
 /**
  * Save the active document: in place when it is a file, otherwise (or with
@@ -726,7 +876,7 @@ async function saveActiveDocument({ askPath = false } = {}) {
   // Degraded browser-only fallback (e.g. `vite dev` opened in a plain
   // tab): there is no real save target, so make a downloaded copy and
   // say so explicitly rather than silently pretending this saved.
-  downloadAsFile(text, 'untitled.json');
+  downloadAsFile(text, defaultFileName(state.kind));
   toast.showToast('Tauri unavailable — downloaded a copy instead of saving in place.', 'info');
   return false;
 }
@@ -742,8 +892,8 @@ async function saveAsNative(text) {
   try {
     const { save } = await import('@tauri-apps/plugin-dialog');
     const path = await save({
-      defaultPath: state.currentPath ?? 'untitled.json',
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      defaultPath: state.currentPath ?? defaultFileName(state.kind),
+      filters: dialogFilters(state.kind),
     });
     if (!path) return false;
     await tauriInvoke('write_json_file', { path, contents: text });
@@ -769,7 +919,7 @@ async function openFileNative() {
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      filters: dialogFilters(state.kind),
     });
     if (!selected) return;
     await loadFileFromDisk(selected);
@@ -794,7 +944,8 @@ async function openFolderNative() {
 }
 
 function downloadAsFile(text, filename) {
-  const blob = new Blob([text], { type: 'application/json' });
+  const type = kindForPath(filename) === 'markdown' ? 'text/markdown' : 'application/json';
+  const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -812,13 +963,13 @@ function downloadAsFile(text, filename) {
 function openFileFallback({ compare = false } = {}) {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.json,application/json';
+  input.accept = '.json,application/json,.md,.markdown,text/markdown';
   input.addEventListener('change', () => {
     const file = input.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      docs.newUntitled(String(reader.result ?? ''), { compare });
+      docs.newUntitled(String(reader.result ?? ''), { compare, kind: kindForPath(file.name) });
       toast.dismissToastsByVariant('error');
     };
     reader.readAsText(file);
@@ -900,7 +1051,7 @@ function pluginStorage() {
 let pluginState = loadPluginState(pluginStorage());
 const isActive = (id) => isPluginActive(pluginState, id, pluginEnv);
 
-createToolbar(document.getElementById('toolbar'), handlers, {
+const toolbar = createToolbar(document.getElementById('toolbar'), handlers, {
   plugins: {
     plugins: PLUGINS,
     isEnabled: (id) => isPluginEnabled(pluginState, id),
@@ -908,6 +1059,8 @@ createToolbar(document.getElementById('toolbar'), handlers, {
     onToggle: onPluginToggle,
   },
 });
+toolbar.setMode(state.kind);
+toolbar.setMarkdownView(state.markdownView);
 
 /**
  * Wire a collapsible side panel. A collapsed panel is a slim rail: clicking
@@ -1048,14 +1201,14 @@ window.addEventListener('focus', () => {
 
 const dropzoneOverlay = document.createElement('div');
 dropzoneOverlay.className = 'dropzone-overlay';
-dropzoneOverlay.textContent = 'Drop a .json file to open it';
+dropzoneOverlay.textContent = 'Drop a .json or .md file to open it';
 document.body.appendChild(dropzoneOverlay);
 
-initDragAndDrop(dropzoneOverlay, (path, contents) => {
+initDragAndDrop(dropzoneOverlay, (path, contents, name) => {
   if (path) {
     loadFileFromDisk(path);
   } else if (contents !== null) {
-    docs.newUntitled(contents);
+    docs.newUntitled(contents, name ? { kind: kindForPath(name) } : {});
     toast.dismissToastsByVariant('error');
   }
 });

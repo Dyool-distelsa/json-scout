@@ -1,4 +1,4 @@
-import { EditorState, Compartment } from '@codemirror/state';
+import { EditorState, Compartment, Facet } from '@codemirror/state';
 import {
   EditorView,
   keymap,
@@ -9,6 +9,7 @@ import {
   drawSelection,
 } from '@codemirror/view';
 import { json } from '@codemirror/lang-json';
+import { markdown } from '@codemirror/lang-markdown';
 import {
   foldGutter,
   foldKeymap,
@@ -27,6 +28,17 @@ import { shouldProcessPaste } from './pasteRules.js';
 
 const themeCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
+/** Per-document language: JSON (with its linter) or Markdown. */
+const languageCompartment = new Compartment();
+
+/** The kind of the document a state holds (see ui/docKind.js). */
+const docKind = Facet.define({ combine: (values) => values[0] ?? 'json' });
+
+/** @param {import('./docKind.js').DocKind} kind */
+function languageFor(kind) {
+  if (kind === 'markdown') return [docKind.of('markdown'), markdown()];
+  return [docKind.of('json'), lintGutter(), linter(jsonLintSource), json()];
+}
 
 /**
  * Editor palette. The base values (bg, bgAlt, text, dim, accent) MUST stay in
@@ -109,6 +121,15 @@ function buildHighlight(p) {
     { tag: t.number, color: p.number },
     { tag: [t.bool, t.null], color: p.keyword },
     { tag: [t.punctuation, t.separator, t.brace, t.squareBracket], color: p.punctuation },
+    // Markdown
+    { tag: t.heading, color: p.key, fontWeight: '600' },
+    { tag: t.strong, fontWeight: '700' },
+    { tag: t.emphasis, fontStyle: 'italic' },
+    { tag: t.strikethrough, textDecoration: 'line-through' },
+    { tag: [t.link, t.url], color: p.accent },
+    { tag: t.monospace, color: p.string },
+    { tag: t.quote, color: p.dim, fontStyle: 'italic' },
+    { tag: [t.processingInstruction, t.contentSeparator], color: p.punctuation },
   ]);
 }
 
@@ -167,7 +188,10 @@ const updateListener = EditorView.updateListener.of((update) => {
 const pasteHandler = EditorView.domEventHandlers({
   paste(event, view) {
     const onPaste = viewCallbacks.get(view)?.onPaste;
-    if (typeof onPaste !== 'function' || view.state.readOnly) return false;
+    // The paste pipeline repairs and formats JSON: Markdown pastes as typed.
+    if (typeof onPaste !== 'function' || view.state.readOnly || view.state.facet(docKind) !== 'json') {
+      return false;
+    }
     const { ranges, main } = view.state.selection;
     if (ranges.length !== 1 || !shouldProcessPaste(view.state.doc.length, main.from, main.to)) {
       return false;
@@ -189,7 +213,7 @@ const pasteHandler = EditorView.domEventHandlers({
 });
 
 /**
- * Create a CodeMirror 6 JSON editor.
+ * Create a CodeMirror 6 editor for JSON or Markdown documents.
  * @param {HTMLElement} parent
  * @param {{ doc?: string, theme?: 'dark'|'light', readOnly?: boolean, onChange?: () => void,
  *   onPaste?: (text: string) => string | null }} [options]
@@ -202,7 +226,7 @@ export function createEditor(parent, options = {}) {
 
   let currentTheme = theme;
   let currentReadOnly = readOnly;
-  const buildState = (text) => EditorState.create({
+  const buildState = (text, kind = 'json') => EditorState.create({
     doc: text,
     extensions: [
       lineNumbers(),
@@ -215,9 +239,7 @@ export function createEditor(parent, options = {}) {
       bracketMatching(),
       highlightActiveLine(),
       highlightSelectionMatches(),
-      lintGutter(),
-      linter(jsonLintSource),
-      json(),
+      languageCompartment.of(languageFor(kind)),
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
       themeCompartment.of(currentTheme === 'light' ? lightPalette : darkPalette),
       readOnlyCompartment.of(EditorState.readOnly.of(currentReadOnly)),
@@ -242,8 +264,19 @@ export function createEditor(parent, options = {}) {
      * A fresh, independent document state (own undo history and selection)
      * for another open document. Shown with `setState`.
      * @param {string} text
+     * @param {import('./docKind.js').DocKind} [kind]
      */
-    createState: (text) => buildState(text),
+    createState: (text, kind) => buildState(text, kind),
+    /** The kind of the shown document. */
+    getKind: () => view.state.facet(docKind),
+    /**
+     * Switch the shown document to another language (it keeps its text,
+     * undo history and selection).
+     * @param {import('./docKind.js').DocKind} kind
+     */
+    setKind: (kind) => {
+      view.dispatch({ effects: languageCompartment.reconfigure(languageFor(kind)) });
+    },
     /** The shown document's whole state, to stash while another is shown. */
     getState: () => view.state,
     /**

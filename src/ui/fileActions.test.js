@@ -11,6 +11,8 @@ import {
   namesIn,
   parentDir,
   withJsonExtension,
+  withKeptExtension,
+  withMarkdownExtension,
 } from './fileActions.js';
 
 const tree = {
@@ -81,5 +83,23 @@ describe('bulk wording', () => {
     expect(bulkSummary('format', { changed: 2, unchanged: 1, failed: [{ path: 'x' }] }, 1)).toBe(
       '2 formatted, 1 already done, 1 not valid JSON, 1 skipped (unsaved edits)'
     );
+  });
+});
+
+describe('Markdown file names', () => {
+  it('duplicates keep a Markdown extension', () => {
+    expect(duplicateName('README.md', ['README.md'])).toBe('README copy.md');
+    expect(duplicateName('notes', ['notes'])).toBe('notes copy');
+  });
+
+  it('adds .md when no Markdown extension is given', () => {
+    expect(withMarkdownExtension('plan')).toBe('plan.md');
+    expect(withMarkdownExtension('plan.markdown')).toBe('plan.markdown');
+  });
+
+  it('a rename keeps the extension the file had unless one is typed', () => {
+    expect(withKeptExtension('guide', 'README.md')).toBe('guide.md');
+    expect(withKeptExtension('data', 'a.json')).toBe('data.json');
+    expect(withKeptExtension('data.json', 'README.md')).toBe('data.json');
   });
 });

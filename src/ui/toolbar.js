@@ -8,11 +8,52 @@ function withHint(title, action) {
   return hint ? `${title} (${hint})` : title;
 }
 import { createPluginsMenu } from './pluginsMenu.js';
+import { DOC_KINDS, MARKDOWN_VIEWS, kindLabel } from './docKind.js';
+
+const VIEW_LABELS = { raw: 'Raw', split: 'Split', preview: 'Preview' };
+const VIEW_TITLES = {
+  raw: 'Markdown source only',
+  split: 'Source and preview side by side',
+  preview: 'Rendered preview only',
+};
+
+/**
+ * A row of toggle buttons where exactly one is pressed.
+ * @param {string} label accessible name of the group
+ * @param {{ value: string, label: string, title: string }[]} options
+ * @param {(value: string) => void} onPick
+ */
+function createSegmented(label, options, onPick) {
+  const element = document.createElement('div');
+  element.className = 'segmented';
+  element.setAttribute('role', 'group');
+  element.setAttribute('aria-label', label);
+  const buttons = options.map((option) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'segmented__btn';
+    el.textContent = option.label;
+    el.title = option.title;
+    el.dataset.value = option.value;
+    el.setAttribute('aria-pressed', 'false');
+    el.addEventListener('click', () => onPick(option.value));
+    element.appendChild(el);
+    return el;
+  });
+  return {
+    element,
+    set(value) {
+      for (const el of buttons) el.setAttribute('aria-pressed', String(el.dataset.value === value));
+    },
+  };
+}
 
 /**
  * Build the main toolbar. `handlers` is a map of action name -> callback,
  * e.g. { format, minify, validate, repair, diffToggle, sortKeys, escape,
- * unescape, save, saveAs, open, themeToggle, indentChange }.
+ * unescape, save, saveAs, open, themeToggle, indentChange, modeChange,
+ * markdownViewChange }. The JSON tools show only while the active document
+ * is JSON (see `setMode`), the Markdown view switch only while it is Markdown.
  * `options.plugins`, when given, adds the Plugins menu (see createPluginsMenu).
  * @param {HTMLElement} container
  * @param {Record<string, Function>} handlers
@@ -23,6 +64,7 @@ export function createToolbar(container, handlers, options = {}) {
 
   const groups = [
     {
+      kind: 'json',
       buttons: [
         { key: 'format', label: 'Format', title: withHint('Format', 'format') },
         { key: 'minify', label: 'Minify', title: withHint('Minify', 'minify') },
@@ -32,6 +74,7 @@ export function createToolbar(container, handlers, options = {}) {
       ],
     },
     {
+      kind: 'json',
       buttons: [
         { key: 'escape', label: 'Escape', title: 'Escape the current text as a JSON string' },
         { key: 'unescape', label: 'Unescape', title: 'Unescape a JSON string body' },
@@ -61,9 +104,36 @@ export function createToolbar(container, handlers, options = {}) {
   fileGroup.appendChild(fileMenu.element);
   container.appendChild(fileGroup);
 
+  // Document mode: how the active tab is read (it follows the file extension
+  // when a file opens, and can be switched by hand, e.g. for a pasted draft).
+  const modeGroup = document.createElement('div');
+  modeGroup.className = 'toolbar__group';
+  const modeSwitch = createSegmented(
+    'Document mode',
+    DOC_KINDS.map((kind) => ({ value: kind, label: kindLabel(kind), title: `Treat this document as ${kindLabel(kind)}` })),
+    (kind) => handlers.modeChange?.(kind)
+  );
+  modeGroup.appendChild(modeSwitch.element);
+  container.appendChild(modeGroup);
+
+  /** Groups shown only for one document kind. */
+  const kindGroups = [];
+
+  const viewGroup = document.createElement('div');
+  viewGroup.className = 'toolbar__group';
+  const viewSwitch = createSegmented(
+    'Markdown view',
+    MARKDOWN_VIEWS.map((view) => ({ value: view, label: VIEW_LABELS[view], title: VIEW_TITLES[view] })),
+    (view) => handlers.markdownViewChange?.(view)
+  );
+  viewGroup.appendChild(viewSwitch.element);
+  container.appendChild(viewGroup);
+  kindGroups.push({ kind: 'markdown', element: viewGroup });
+
   for (const group of groups) {
     const groupEl = document.createElement('div');
     groupEl.className = 'toolbar__group';
+    if (group.kind) kindGroups.push({ kind: group.kind, element: groupEl });
     for (const btn of group.buttons) {
       const el = document.createElement('button');
       el.className = 'tool-btn';
@@ -101,6 +171,7 @@ export function createToolbar(container, handlers, options = {}) {
   indentGroup.appendChild(indentLabel);
   indentGroup.appendChild(indentSelect);
   container.appendChild(indentGroup);
+  kindGroups.push({ kind: 'json', element: indentGroup });
 
   const spacer = document.createElement('div');
   spacer.className = 'toolbar__spacer';
@@ -147,5 +218,21 @@ export function createToolbar(container, handlers, options = {}) {
   themeGroup.appendChild(themeBtn);
   container.appendChild(themeGroup);
 
-  return { indentSelect, pluginsMenu };
+  return {
+    indentSelect,
+    pluginsMenu,
+    /**
+     * Reflect the active document's kind: press its mode button and show
+     * only the tools that apply to it.
+     * @param {import('./docKind.js').DocKind} kind
+     */
+    setMode(kind) {
+      modeSwitch.set(kind);
+      for (const group of kindGroups) group.element.hidden = group.kind !== kind;
+    },
+    /** @param {import('./docKind.js').MarkdownView} view */
+    setMarkdownView(view) {
+      viewSwitch.set(view);
+    },
+  };
 }

@@ -133,3 +133,23 @@ describe('tabsToClose', () => {
     expect(tabsToClose(state, 'zz', 'all')).toEqual([]);
   });
 });
+
+describe('document kind', () => {
+  it('a file tab takes its kind from the extension', () => {
+    const { tab } = openFileTab(INITIAL_TABS, 'a', 'C:\\docs\\README.md');
+    expect(tab.kind).toBe('markdown');
+    expect(openFileTab(INITIAL_TABS, 'b', 'C:\\a.json').tab.kind).toBe('json');
+  });
+
+  it('an Untitled tab is JSON unless told otherwise', () => {
+    expect(activeTab(addUntitled(INITIAL_TABS, 'a')).kind).toBe('json');
+    expect(activeTab(addUntitled(INITIAL_TABS, 'a', { kind: 'markdown' })).kind).toBe('markdown');
+  });
+
+  it('saving follows a JSON or Markdown extension and keeps the kind otherwise', () => {
+    const md = addUntitled(INITIAL_TABS, 'a', { kind: 'markdown' });
+    expect(activeTab(markSaved(md, 'a', 'C:\\notes.txt')).kind).toBe('markdown');
+    expect(activeTab(markSaved(md, 'a', 'C:\\data.json')).kind).toBe('json');
+    expect(activeTab(markSaved(addUntitled(INITIAL_TABS, 'a'), 'a', 'C:\\x.md')).kind).toBe('markdown');
+  });
+});

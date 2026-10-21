@@ -32,6 +32,7 @@
             <div id="doc-tabs" class="doc-tabs"></div>
             <div class="editor-pane__body">
               <div id="editor" class="editor"></div>
+              <div id="md-preview" class="md-preview" hidden></div>
               <button
                 id="copy-btn"
                 class="copy-btn"
@@ -78,13 +79,15 @@
           </div>
           <nav class="tabs" id="right-panel-tabs">
             <button class="tab active" data-tab="tree">Tree</button>
+            <button class="tab" data-tab="outline" data-kinds="markdown" hidden>Outline</button>
             <button class="tab" data-tab="query">Query</button>
-            <button class="tab" data-tab="diff">Diff</button>
+            <button class="tab" data-tab="diff" data-kinds="json markdown">Diff</button>
             <button class="tab" data-tab="convert">Convert</button>
             <button class="tab" data-tab="stats">Stats</button>
           </nav>
           <div class="tab-panels" id="right-panel-panels">
             <div class="tab-panel active" data-panel="tree" id="panel-tree"></div>
+            <div class="tab-panel" data-panel="outline" id="panel-outline"></div>
             <div class="tab-panel" data-panel="query" id="panel-query"></div>
             <div class="tab-panel" data-panel="diff" id="panel-diff"></div>
             <div class="tab-panel" data-panel="convert" id="panel-convert"></div>

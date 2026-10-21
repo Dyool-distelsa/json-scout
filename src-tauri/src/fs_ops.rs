@@ -42,6 +42,15 @@ fn format_bytes(bytes: u64) -> String {
     format!("{} {}", trimmed, UNITS[unit])
 }
 
+/// Extensions (lower case) of the documents the app opens: JSON and Markdown.
+const DOCUMENT_EXTENSIONS: [&str; 3] = [".json", ".md", ".markdown"];
+
+/// Whether a file name is a document the app opens (case-insensitive).
+pub(crate) fn is_document_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    DOCUMENT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonFileEntry {
     pub name: String,
@@ -203,7 +212,7 @@ fn modified_millis(metadata: &fs::Metadata) -> Option<u64> {
         .map(|duration| duration.as_millis() as u64)
 }
 
-/// Scan `dir` into a `TreeDir`. Subfolders without any `*.json` file below
+/// Scan `dir` into a `TreeDir`. Subfolders without any document below
 /// them are left out. Unreadable subfolders are skipped rather than failing
 /// the whole scan.
 fn scan_tree_level(dir: &Path, depth: usize, budget: &mut usize, truncated: &mut bool) -> std::io::Result<TreeDir> {
@@ -235,7 +244,7 @@ fn scan_tree_level(dir: &Path, depth: usize, budget: &mut usize, truncated: &mut
                     node.dirs.push(child);
                 }
             }
-        } else if file_type.is_file() && name.to_lowercase().ends_with(".json") {
+        } else if file_type.is_file() && is_document_name(&name) {
             let Ok(metadata) = entry.metadata() else { continue };
             node.files.push(TreeFile {
                 path: entry.path().to_string_lossy().into_owned(),
@@ -250,7 +259,7 @@ fn scan_tree_level(dir: &Path, depth: usize, budget: &mut usize, truncated: &mut
     Ok(node)
 }
 
-/// Recursively scan a folder for `*.json` files (case-insensitive), keeping
+/// Recursively scan a folder for JSON and Markdown files (case-insensitive), keeping
 /// only the subfolders that lead to one. Hidden and dependency/build
 /// folders are skipped, and depth/entry limits keep huge trees bounded.
 #[tauri::command]
@@ -466,6 +475,7 @@ mod tests {
         fs::write(dir.path().join("b.json"), "{}").unwrap();
         fs::write(dir.path().join("A.JSON"), "{}").unwrap();
         fs::write(dir.path().join("notes.txt"), "x").unwrap();
+        fs::write(dir.path().join("README.md"), "# x").unwrap();
         let nested = dir.path().join("config").join("env");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("dev.json"), "{\"a\":1}").unwrap();
@@ -478,7 +488,7 @@ mod tests {
         let tree = scan_dir_tree(dir.path().to_string_lossy().to_string()).unwrap();
         assert!(!tree.truncated);
         let files: Vec<&str> = tree.root.files.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(files, vec!["A.JSON", "b.json"]);
+        assert_eq!(files, vec!["A.JSON", "b.json", "README.md"]);
         assert_eq!(tree.root.dirs.len(), 1);
         let config = &tree.root.dirs[0];
         assert_eq!(config.name, "config");

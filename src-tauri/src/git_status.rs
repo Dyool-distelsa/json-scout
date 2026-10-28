@@ -66,7 +66,7 @@ fn kind_of(x: u8, y: u8) -> ChangeKind {
     }
 }
 
-/// Parse `git status --porcelain=v1 -z` output, keeping `*.json` entries.
+/// Parse `git status --porcelain=v1 -z` output, keeping JSON and Markdown entries.
 /// Paths come relative to the repository root; `prefix` (from
 /// `git rev-parse --show-prefix`) is stripped so they are relative to the
 /// opened folder.
@@ -85,7 +85,7 @@ fn parse_porcelain(out: &[u8], prefix: &str) -> Vec<Entry> {
         } else {
             None
         };
-        if path.ends_with('/') || !path.to_lowercase().ends_with(".json") {
+        if path.ends_with('/') || !crate::fs_ops::is_document_name(&path) {
             continue;
         }
         let kind = kind_of(x, y);
@@ -100,7 +100,7 @@ fn parse_porcelain(out: &[u8], prefix: &str) -> Vec<Entry> {
     changes
 }
 
-/// The changed `*.json` files under `path`, or `None` when it is not inside
+/// The changed JSON and Markdown files under `path`, or `None` when it is not inside
 /// a git repository (or git is not installed).
 #[tauri::command(async)]
 pub fn git_changed_json(path: String) -> Option<Vec<ChangedFile>> {
@@ -144,8 +144,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn parses_porcelain_entries_keeping_only_json() {
-        let out = b" M sub/a.json\0?? sub/new.JSON\0D  sub/gone.json\0R  sub/to.json\0sub/from.json\0 M sub/readme.md\0UU sub/c.json\0A  sub/added.json\0";
+    fn parses_porcelain_entries_keeping_only_documents() {
+        let out = b" M sub/a.json\0?? sub/new.JSON\0D  sub/gone.json\0R  sub/to.json\0sub/from.json\0 M sub/readme.md\0 M sub/notes.txt\0UU sub/c.json\0A  sub/added.json\0";
         let changes: Vec<(String, ChangeKind, Option<String>)> = parse_porcelain(out, "sub/")
             .into_iter()
             .map(|e| (e.relative, e.kind, e.head))
@@ -159,6 +159,7 @@ mod tests {
                 ("c.json".to_string(), ChangeKind::Conflict, some("sub/c.json")),
                 ("gone.json".to_string(), ChangeKind::Deleted, some("sub/gone.json")),
                 ("new.JSON".to_string(), ChangeKind::Untracked, None),
+                ("readme.md".to_string(), ChangeKind::Modified, some("sub/readme.md")),
                 ("to.json".to_string(), ChangeKind::Renamed, some("sub/from.json")),
             ]
         );

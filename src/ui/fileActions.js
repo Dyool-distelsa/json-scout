@@ -13,7 +13,8 @@ const INVALID_NAME = /[\\/:*?"<>|]/;
  */
 export function folderChoices() {
   return [
-    { kind: 'new-file', label: 'New JSON file…' },
+    { kind: 'new-file', label: 'New file…' },
+    { kind: 'new-markdown', label: 'New Markdown file…' },
     { kind: 'rename', label: 'Rename…' },
     { kind: 'separator' },
     { kind: 'format', label: 'Format all JSON files' },
@@ -46,9 +47,9 @@ export function entryName(path) {
  */
 export function duplicateName(name, taken) {
   const lower = new Set(taken.map((n) => n.toLowerCase()));
-  const dot = name.toLowerCase().endsWith('.json') ? name.length - 5 : name.length;
+  const ext = /\.(json|md|markdown)$/i.exec(name)?.[0] ?? '';
+  const dot = name.length - ext.length;
   const stem = name.slice(0, dot);
-  const ext = name.slice(dot);
   for (let n = 1; ; n += 1) {
     const candidate = `${stem} copy${n === 1 ? '' : ` ${n}`}${ext}`;
     if (!lower.has(candidate.toLowerCase())) return candidate;
@@ -58,6 +59,22 @@ export function duplicateName(name, taken) {
 /** `name` with a `.json` extension added when it has none. */
 export function withJsonExtension(name) {
   return name.toLowerCase().endsWith('.json') ? name : `${name}.json`;
+}
+
+/** `name` with a `.md` extension added when it has no Markdown one. */
+export function withMarkdownExtension(name) {
+  return /\.(md|markdown)$/i.test(name) ? name : `${name}.md`;
+}
+
+/**
+ * The name a renamed file ends up with: a JSON or Markdown extension typed by
+ * the user is kept, otherwise the file keeps the extension it had.
+ * @param {string} name typed name
+ * @param {string} current the file's present name
+ */
+export function withKeptExtension(name, current) {
+  if (/\.(json|md|markdown)$/i.test(name)) return name;
+  return /\.(md|markdown)$/i.test(current) ? withMarkdownExtension(name) : withJsonExtension(name);
 }
 
 /**
@@ -92,7 +109,7 @@ export function findDir(dir, path) {
 }
 
 /**
- * Every JSON file under `dir`, at any depth.
+ * Every file (JSON or Markdown) under `dir`, at any depth.
  * @param {import('./sidebar.js').TreeDir} dir
  * @returns {string[]}
  */

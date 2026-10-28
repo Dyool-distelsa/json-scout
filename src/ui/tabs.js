@@ -1,3 +1,5 @@
+import { isSupportedPath, kindForPath } from './docKind.js';
+
 /**
  * Open documents (editor tabs). Pure: every function returns a new state and
  * touches no DOM, so it is unit tested in node.
@@ -11,6 +13,7 @@
  *   title: string,
  *   dirty: boolean,
  *   fromVault: boolean,
+ *   kind: import('./docKind.js').DocKind,
  * }} Tab
  * @typedef {{ tabs: Tab[], activeId: string|null }} TabsState
  */
@@ -76,10 +79,11 @@ export function findTabByPath(state, path) {
  * it active unless `activate` is false.
  * @param {TabsState} state
  * @param {string} id
- * @param {{ dirty?: boolean, activate?: boolean, atEnd?: boolean }} [options]
+ * @param {{ dirty?: boolean, activate?: boolean, atEnd?: boolean,
+ *   kind?: import('./docKind.js').DocKind }} [options]
  */
-export function addUntitled(state, id, { dirty = false, activate = true, atEnd = false } = {}) {
-  const tab = { id, path: null, title: nextUntitledTitle(state.tabs), dirty, fromVault: false };
+export function addUntitled(state, id, { dirty = false, activate = true, atEnd = false, kind = 'json' } = {}) {
+  const tab = { id, path: null, title: nextUntitledTitle(state.tabs), dirty, fromVault: false, kind };
   return insert(state, tab, activate, atEnd);
 }
 
@@ -96,7 +100,7 @@ export function openFileTab(state, id, path, { fromVault = false } = {}) {
   if (existing) {
     return { state: { ...state, activeId: existing.id }, tab: existing, existed: true };
   }
-  const tab = { id, path, title: baseName(path), dirty: false, fromVault };
+  const tab = { id, path, title: baseName(path), dirty: false, fromVault, kind: kindForPath(path) };
   return { state: insert(state, tab, true), tab, existed: false };
 }
 
@@ -149,9 +153,14 @@ export function updateTab(state, id, patch) {
   };
 }
 
-/** The tab now lives at `path`: it is a clean file tab from here on. */
+/**
+ * The tab now lives at `path`: it is a clean file tab from here on. A JSON or
+ * Markdown extension decides its kind; any other keeps the one it had.
+ */
 export function markSaved(state, id, path) {
-  return updateTab(state, id, { path, title: baseName(path), dirty: false });
+  const tab = findTab(state, id);
+  const kind = isSupportedPath(path) ? kindForPath(path) : tab?.kind ?? 'json';
+  return updateTab(state, id, { path, title: baseName(path), dirty: false, kind });
 }
 
 /** Tab after (`step` 1) or before (`step` -1) the active one, wrapping. */

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createDocuments } from './documents.js';
+import { defaultFileName } from './docKind.js';
 
 /** An editor double: a state is `{ text }`, the shown one is mutable. */
 function fakeEditor() {
@@ -12,6 +13,7 @@ function fakeEditor() {
       shown = next;
     },
     getContent: () => shown.text,
+    setKind: vi.fn(),
     type(text) {
       shown.text = text;
     },
@@ -73,6 +75,29 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('documents', () => {
+  it('inherits Markdown for empty new tabs and defaults their save name to .md', () => {
+    const { docs } = setup();
+    docs.newUntitled('', { kind: 'markdown' });
+    docs.newUntitled();
+    expect(docs.active().kind).toBe('markdown');
+    expect(defaultFileName(docs.active().kind)).toBe('untitled.md');
+  });
+
+  it('detects the extension again when switching between saved tabs', () => {
+    const { docs, onActiveChange } = setup();
+    docs.openFile('/notes/readme.MD', '# Hello');
+    const markdown = docs.active().id;
+    docs.setActiveKind('json');
+    docs.openFile('/notes/data.json', '{}');
+    const json = docs.active().id;
+    docs.activate(markdown);
+    expect(onActiveChange).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'markdown' }));
+    docs.markSaved('/notes/readme.json');
+    docs.activate(json);
+    docs.activate(markdown);
+    expect(onActiveChange).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'json' }));
+  });
+
   it('keeps each tab’s text when switching', () => {
     const { docs, editor } = setup();
     const first = docs.newUntitled();

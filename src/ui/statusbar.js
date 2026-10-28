@@ -57,6 +57,7 @@ export function createStatusBar(container, { build = readBuildInfo() } = {}) {
     setValid(valid, message = '') {
       const changed = valid !== previousValid;
       previousValid = valid;
+      dot.classList.remove('statusbar__dot--neutral');
       dot.classList.toggle('invalid', !valid);
       indicatorLabel.textContent = valid ? 'Valid' : `Invalid${message ? `: ${message}` : ''}`;
       if (changed) {
@@ -64,6 +65,17 @@ export function createStatusBar(container, { build = readBuildInfo() } = {}) {
         void dot.offsetWidth; // restart the animation even if it's still running
         dot.classList.add('statusbar__dot--flip');
       }
+    },
+    /**
+     * A Markdown document has no valid/invalid state: show its word count
+     * with a neutral dot instead.
+     * @param {number} words
+     */
+    setMarkdown(words) {
+      previousValid = true;
+      dot.classList.remove('invalid');
+      dot.classList.add('statusbar__dot--neutral');
+      indicatorLabel.textContent = `Markdown · ${words} word${words === 1 ? '' : 's'}`;
     },
     setCursor(line, column) {
       cursor.textContent = `Ln ${line}, Col ${column}`;

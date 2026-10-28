@@ -12,6 +12,7 @@ import {
   markSaved,
   cycle,
 } from './tabs.js';
+import { guessKind, kindForPath } from './docKind.js';
 
 /** Quiet time after the last keystroke before an Untitled draft is written. */
 export const DRAFT_DELAY_MS = 500;
@@ -23,8 +24,8 @@ export const DRAFT_DELAY_MS = 500;
  * the compare editor, beside the active one.
  *
  * @param {{
- *   editor: { createState: (text: string) => any, getState: () => any,
- *     setState: (state: any) => void, getContent: () => string },
+ *   editor: { createState: (text: string, kind?: string) => any, getState: () => any,
+ *     setState: (state: any) => void, getContent: () => string, setKind: (kind: string) => void },
  *   strip: { render: (state: import('./tabs.js').TabsState) => void },
  *   drafts: import('./drafts.js').DraftStore,
  *   askSave: (tab: import('./tabs.js').Tab) => Promise<'save'|'discard'|'cancel'>,
@@ -93,6 +94,10 @@ export function createDocuments({
   /** Show `id` in the editor, stashing what was shown unless it is gone. */
   function show(id) {
     const previous = state.activeId;
+    const tab = findTab(state, id);
+    if (previous !== id && tab?.path) {
+      state = updateTab(state, id, { kind: kindForPath(tab.path) });
+    }
     if (id === compareId && previous !== null) {
       // The compared tab becomes the active one: the two panes swap.
       const shown = editor.getState();
@@ -195,23 +200,24 @@ export function createDocuments({
 
   /**
    * Open a new Untitled tab, or with `compare` show it in the compare editor
-   * and keep the active tab.
+   * and keep the active tab. Empty tabs inherit the active kind; nonempty
+   * text is detected unless a kind is given.
    * @param {string} [text]
-   * @param {{ compare?: boolean }} [options]
+   * @param {{ compare?: boolean, kind?: import('./docKind.js').DocKind }} [options]
    */
-  function newUntitled(text = '', { compare = false } = {}) {
+  function newUntitled(text = '', { compare = false, kind = text === '' ? activeTab(state)?.kind ?? 'json' : guessKind(text) } = {}) {
     const id = newId();
     if (compare) {
-      state = addUntitled(state, id, { dirty: text !== '', activate: false });
-      stashed.set(id, editor.createState(text));
+      state = addUntitled(state, id, { dirty: text !== '', activate: false, kind });
+      stashed.set(id, editor.createState(text, kind));
       setCompare(id);
       if (text !== '') scheduleDraft(id);
       return id;
     }
     const current = state.activeId;
     if (current !== null) stashed.set(current, editor.getState());
-    state = addUntitled(state, id, { dirty: text !== '' });
-    editor.setState(editor.createState(text));
+    state = addUntitled(state, id, { dirty: text !== '', kind });
+    editor.setState(editor.createState(text, kind));
     render();
     onActiveChange(activeTab(state));
     if (text !== '') scheduleDraft(id);
@@ -233,15 +239,16 @@ export function createDocuments({
   function openFile(path, contents, { fromVault = false, replace = false, compare = false } = {}) {
     const before = activeTab(state);
     const opened = openFileTab(state, newId(), path, { fromVault });
+    const kind = opened.existed ? opened.tab.kind : kindForPath(path);
     const { tab, existed } = opened;
     if (compare) {
       if (tab.id === state.activeId) return false;
       if (!existed) {
         state = { ...opened.state, activeId: state.activeId };
-        stashed.set(tab.id, editor.createState(contents));
+        stashed.set(tab.id, editor.createState(contents, kind));
       } else if (!tab.dirty || replace) {
-        if (tab.id === compareId) compareEditor.setState(editor.createState(contents));
-        else stashed.set(tab.id, editor.createState(contents));
+        if (tab.id === compareId) compareEditor.setState(editor.createState(contents, kind));
+        else stashed.set(tab.id, editor.createState(contents, kind));
         state = updateTab(state, tab.id, { dirty: false });
       }
       if (tab.id === compareId) {
@@ -255,11 +262,11 @@ export function createDocuments({
     if (existed) {
       if (!tab.dirty || replace) {
         if (state.activeId === tab.id) {
-          editor.setState(editor.createState(contents));
+          editor.setState(editor.createState(contents, kind));
         } else if (tab.id === compareId) {
-          compareEditor.setState(editor.createState(contents));
+          compareEditor.setState(editor.createState(contents, kind));
         } else {
-          stashed.set(tab.id, editor.createState(contents));
+          stashed.set(tab.id, editor.createState(contents, kind));
         }
         state = updateTab(state, tab.id, { dirty: false, fromVault: tab.fromVault || fromVault });
       }
@@ -273,7 +280,7 @@ export function createDocuments({
     }
     if (before) stashed.set(before.id, editor.getState());
     state = opened.state;
-    editor.setState(editor.createState(contents));
+    editor.setState(editor.createState(contents, kind));
     if (isPristineUntitled(before)) {
       // Its state is the empty doc just stashed; no draft exists for it.
       state = closeTab(state, before.id);
@@ -348,8 +355,9 @@ export function createDocuments({
     if (state.activeId !== null) stashed.set(state.activeId, editor.getState());
     for (const draft of usable) {
       if (findTab(state, draft.id)) continue;
-      state = addUntitled(state, draft.id, { dirty: true, activate: false, atEnd: true });
-      stashed.set(draft.id, editor.createState(draft.contents));
+      const kind = guessKind(draft.contents);
+      state = addUntitled(state, draft.id, { dirty: true, activate: false, atEnd: true, kind });
+      stashed.set(draft.id, editor.createState(draft.contents, kind));
     }
     if (replacePlaceholder) {
       state = closeTab(state, placeholder.id);
@@ -404,7 +412,7 @@ export function createDocuments({
       if (!state.tabs.some((t) => moved(t.path))) return;
       for (const tab of state.tabs.filter((t) => moved(t.path))) {
         const path = to + tab.path.slice(from.length);
-        state = updateTab(state, tab.id, { path, title: baseName(path) });
+        state = updateTab(state, tab.id, { path, title: baseName(path), kind: kindForPath(path) });
       }
       render();
       onActiveChange(activeTab(state));
@@ -413,10 +421,23 @@ export function createDocuments({
     reloadClean(path, contents) {
       const tab = state.tabs.find((t) => t.path === path);
       if (!tab || tab.dirty) return;
-      const next = editor.createState(contents);
+      const next = editor.createState(contents, tab.kind);
       if (tab.id === state.activeId) editor.setState(next);
       else if (tab.id === compareId) compareEditor.setState(next);
       else stashed.set(tab.id, next);
+    },
+    /**
+     * Show the active document as another kind (JSON or Markdown). Its text,
+     * undo history and selection stay as they are.
+     * @param {import('./docKind.js').DocKind} kind
+     */
+    setActiveKind(kind) {
+      const tab = activeTab(state);
+      if (!tab || tab.kind === kind) return;
+      state = updateTab(state, tab.id, { kind });
+      editor.setKind(kind);
+      render();
+      onActiveChange(activeTab(state));
     },
     active: () => activeTab(state),
     tabs: () => state.tabs,

@@ -1,13 +1,15 @@
+import { isSupportedPath } from './docKind.js';
+
 /**
- * Wire up drag-and-drop of a .json file onto the window.
+ * Wire up drag-and-drop of a .json or Markdown file onto the window.
  * Tries the native Tauri webview drag-drop event first (the default in
  * Tauri v2, since OS-level drag-drop is enabled unless explicitly turned
  * off), and falls back to the standard HTML5 DnD events so this also
  * works when previewing the frontend in a plain browser during `vite dev`.
  * @param {HTMLElement} dropzoneOverlay
- * @param {(path: string|null, contents: string|null) => void} onFileDropped
+ * @param {(path: string|null, contents: string|null, name?: string) => void} onFileDropped
  *        Called with a file system path (Tauri) or null plus the file's
- *        text contents (browser fallback).
+ *        text contents and name (browser fallback).
  */
 export function initDragAndDrop(dropzoneOverlay, onFileDropped) {
   let tauriUnlisten = null;
@@ -22,8 +24,8 @@ export function initDragAndDrop(dropzoneOverlay, onFileDropped) {
         } else if (type === 'drop') {
           dropzoneOverlay.classList.remove('active');
           const paths = event.payload.paths ?? [];
-          const jsonPath = paths.find((p) => p.toLowerCase().endsWith('.json'));
-          if (jsonPath) onFileDropped(jsonPath, null);
+          const supported = paths.find(isSupportedPath);
+          if (supported) onFileDropped(supported, null);
         } else {
           dropzoneOverlay.classList.remove('active');
         }
@@ -48,10 +50,10 @@ export function initDragAndDrop(dropzoneOverlay, onFileDropped) {
   window.addEventListener('drop', (e) => {
     e.preventDefault();
     dropzoneOverlay.classList.remove('active');
-    const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.name.toLowerCase().endsWith('.json'));
+    const file = [...(e.dataTransfer?.files ?? [])].find((f) => isSupportedPath(f.name));
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => onFileDropped(null, String(reader.result ?? ''));
+    reader.onload = () => onFileDropped(null, String(reader.result ?? ''), file.name);
     reader.readAsText(file);
   });
 

@@ -15,9 +15,12 @@ function describeMongoCount(count, returned, shown) {
 import { diffJson, describeDiff } from '../tools/diff.js';
 import { jsonToYaml, yamlToJson, jsonToCsv } from '../tools/convert.js';
 import { formatBytes } from '../tools/jsonUtils.js';
+import { unifiedDiff, hunkHeader } from './unifiedDiff.js';
 
 /**
- * Wire up the right-hand tabbed panel: Tree / Query / Diff / Convert / Stats.
+ * Wire up the right-hand tabbed panel: Tree / Query / Diff / Convert / Stats
+ * for JSON, Outline / Diff for Markdown (a tab's `data-kinds` lists the
+ * document kinds it applies to; see `setKind`).
  * @param {{ tabsEl: HTMLElement, panelsEl: HTMLElement, onCopyPath: (path: string) => void, onNotify: (msg: string, kind?: string) => void }} refs
  */
 export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
@@ -51,20 +54,43 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
     }
   }
 
+  function selectTab(tab) {
+    tabs.forEach((t) => t.classList.remove('active'));
+    Object.values(panels).forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    panels[tab.dataset.tab]?.classList.add('active');
+    if (tab.dataset.tab === 'stats' && pendingStats) {
+      const [text, parseResult] = pendingStats;
+      pendingStats = null;
+      renderStats(text, parseResult);
+    }
+    placeIndicator();
+  }
+
   tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      tabs.forEach((t) => t.classList.remove('active'));
-      Object.values(panels).forEach((p) => p.classList.remove('active'));
-      tab.classList.add('active');
-      panels[tab.dataset.tab]?.classList.add('active');
-      if (tab.dataset.tab === 'stats' && pendingStats) {
-        const [text, parseResult] = pendingStats;
-        pendingStats = null;
-        renderStats(text, parseResult);
-      }
-      placeIndicator();
-    });
+    tab.addEventListener('click', () => selectTab(tab));
   });
+
+  /** Tab picked last for each document kind, restored when it comes back. */
+  const lastTabByKind = {};
+  let currentKind = 'json';
+
+  /**
+   * Show only the tabs that apply to `kind`, keeping (or restoring) the tab
+   * the user had picked for it.
+   * @param {import('./docKind.js').DocKind} kind
+   */
+  function setKind(kind) {
+    if (kind === currentKind) return;
+    const active = tabs.find((t) => t.classList.contains('active'));
+    if (active) lastTabByKind[currentKind] = active.dataset.tab;
+    currentKind = kind;
+    const applies = (t) => (t.dataset.kinds ?? 'json').split(' ').includes(kind);
+    for (const tab of tabs) tab.hidden = !applies(tab);
+    const preferred = tabs.find((t) => t.dataset.tab === lastTabByKind[kind] && applies(t));
+    const next = active && applies(active) ? active : preferred ?? tabs.find(applies);
+    if (next) selectTab(next);
+  }
 
   placeIndicator();
   if (typeof ResizeObserver !== 'undefined') {
@@ -456,5 +482,72 @@ export function initRightPanel({ tabsEl, panelsEl, onCopyPath, onNotify }) {
     }
   }
 
-  return { renderTree, renderStats, renderQuery, renderConvert, renderDiff };
+  /**
+   * Line diff of two texts (Markdown compare), as unified hunks.
+   * @param {string} leftText
+   * @param {string} rightText
+   */
+  function renderTextDiff(leftText, rightText) {
+    const panel = panels.diff;
+    panel.innerHTML = '';
+    const { hunks, added, removed } = unifiedDiff(leftText, rightText);
+    if (hunks.length === 0) {
+      panel.textContent = 'No differences.';
+      return;
+    }
+    const summary = document.createElement('div');
+    summary.className = 'text-diff__summary';
+    summary.textContent = `+${added} −${removed} lines`;
+    panel.appendChild(summary);
+    const pre = document.createElement('pre');
+    pre.className = 'text-diff';
+    for (const hunk of hunks) {
+      const header = document.createElement('div');
+      header.className = 'text-diff__hunk';
+      header.textContent = hunkHeader(hunk);
+      pre.appendChild(header);
+      for (const line of hunk.lines) {
+        const row = document.createElement('div');
+        row.className = `text-diff__line text-diff__line--${line.type === '+' ? 'added' : line.type === '-' ? 'removed' : 'same'}`;
+        row.textContent = `${line.type} ${line.text}`;
+        pre.appendChild(row);
+      }
+    }
+    panel.appendChild(pre);
+  }
+
+  /**
+   * The headings of a Markdown document; picking one moves the editor there.
+   * @param {{ level: number, text: string, line: number }[]} headings
+   * @param {(line: number, index: number) => void} onPick
+   */
+  function renderOutline(headings, onPick) {
+    const panel = panels.outline;
+    if (!panel) return;
+    panel.innerHTML = '';
+    if (headings.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'outline__empty';
+      empty.textContent = 'No headings yet. Lines starting with # show up here.';
+      panel.appendChild(empty);
+      return;
+    }
+    const list = document.createElement('ul');
+    list.className = 'outline';
+    for (const heading of headings) {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `outline__item outline__item--h${heading.level}`;
+      button.style.setProperty('--outline-level', String(heading.level - 1));
+      button.textContent = heading.text;
+      button.title = `Line ${heading.line}`;
+      button.addEventListener('click', () => onPick(heading.line, headings.indexOf(heading)));
+      item.appendChild(button);
+      list.appendChild(item);
+    }
+    panel.appendChild(list);
+  }
+
+  return { renderTree, renderStats, renderQuery, renderConvert, renderDiff, renderTextDiff, renderOutline, setKind };
 }

@@ -350,7 +350,7 @@ async function renameEntry(path, kind) {
 }
 
 /** @param {import('./ui/docKind.js').DocKind} kind */
-async function newFile(dir, kind = 'json') {
+async function newFile(dir, kind = state.kind) {
   const taken = siblingNames(dir);
   const withExtension = kind === 'markdown' ? withMarkdownExtension : withJsonExtension;
   const name = await promptName({
@@ -410,7 +410,7 @@ async function transformFolder(dir, op) {
 }
 
 function runFolderAction(kind, dir) {
-  if (kind === 'new-file') newFile(dir, 'json');
+  if (kind === 'new-file') newFile(dir);
   else if (kind === 'new-markdown') newFile(dir, 'markdown');
   else if (kind === 'rename') renameEntry(dir, 'dir');
   else transformFolder(dir, kind);
@@ -630,6 +630,7 @@ function handlePaste(text) {
 function onActiveDocumentChange(tab) {
   state.currentPath = tab?.path ?? null;
   state.kind = tab?.kind ?? 'json';
+  editor.setKind(state.kind);
   toolbar.setMode(state.kind);
   rightPanel.setKind(state.kind);
   applyMarkdownView();

@@ -13,7 +13,7 @@ const INVALID_NAME = /[\\/:*?"<>|]/;
  */
 export function folderChoices() {
   return [
-    { kind: 'new-file', label: 'New JSON file…' },
+    { kind: 'new-file', label: 'New file…' },
     { kind: 'new-markdown', label: 'New Markdown file…' },
     { kind: 'rename', label: 'Rename…' },
     { kind: 'separator' },

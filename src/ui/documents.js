@@ -94,6 +94,10 @@ export function createDocuments({
   /** Show `id` in the editor, stashing what was shown unless it is gone. */
   function show(id) {
     const previous = state.activeId;
+    const tab = findTab(state, id);
+    if (previous !== id && tab?.path) {
+      state = updateTab(state, id, { kind: kindForPath(tab.path) });
+    }
     if (id === compareId && previous !== null) {
       // The compared tab becomes the active one: the two panes swap.
       const shown = editor.getState();
@@ -196,11 +200,12 @@ export function createDocuments({
 
   /**
    * Open a new Untitled tab, or with `compare` show it in the compare editor
-   * and keep the active tab. Its kind is guessed from `text` unless given.
+   * and keep the active tab. Empty tabs inherit the active kind; nonempty
+   * text is detected unless a kind is given.
    * @param {string} [text]
    * @param {{ compare?: boolean, kind?: import('./docKind.js').DocKind }} [options]
    */
-  function newUntitled(text = '', { compare = false, kind = guessKind(text) } = {}) {
+  function newUntitled(text = '', { compare = false, kind = text === '' ? activeTab(state)?.kind ?? 'json' : guessKind(text) } = {}) {
     const id = newId();
     if (compare) {
       state = addUntitled(state, id, { dirty: text !== '', activate: false, kind });
@@ -407,7 +412,7 @@ export function createDocuments({
       if (!state.tabs.some((t) => moved(t.path))) return;
       for (const tab of state.tabs.filter((t) => moved(t.path))) {
         const path = to + tab.path.slice(from.length);
-        state = updateTab(state, tab.id, { path, title: baseName(path) });
+        state = updateTab(state, tab.id, { path, title: baseName(path), kind: kindForPath(path) });
       }
       render();
       onActiveChange(activeTab(state));

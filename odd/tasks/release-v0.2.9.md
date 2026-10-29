@@ -8,8 +8,8 @@ Branch: `feature/environment-indicator` then authorized integration to verified 
 
 ## Tasks
 
-- R1 [S1] route:inline status:in_progress commit:pending — Prepare 0.2.9 metadata and release notes; validate consistent versions and existing functional checks.
-- R2 [S1] route:inline-delivery/CI-verifier status:pending commit:pending — Integrate and push main without force/history rewriting; observe exact-candidate CI.
+- R1 [S1] route:inline status:done commit:7e4f646 — Prepare 0.2.9 metadata and release notes; validate consistent versions and existing functional checks.
+- R2 [S1] route:inline-delivery/CI-verifier status:in_progress commit:pending — Integrate and push main without force/history rewriting; observe exact-candidate CI.
 - R3 [S1] route:inline-delivery/independent-verifier status:pending commit:pending — Create the release once, build and verify five Windows/Linux assets, publish and confirm public state.
 
 ## Log
@@ -21,3 +21,4 @@ Branch: `feature/environment-indicator` then authorized integration to verified 
 - L5 — Metadata/docs-only preparation has no meaningful behavioral RED. Preserve dependencies, runtime permissions and CI/release workflows. Route inline: one dependent metadata/delivery chain, not parallel independent writers. Repository CI supplies independent JS/build/Rust execution; one bounded release verifier will inspect actual remote artifacts.
 - L6 — All six package/npm-lock/Cargo/Cargo-lock/Tauri version declarations changed to 0.2.9; npm dependency graph unchanged. Local release links and diff check passed. A metadata-check script first had an escaping syntax error, then exposed a malformed package.json edit; the single damaged version line was corrected and the check passed before any commit or push. Job-6 passed: 916 tests / 61 files and production frontend build, existing large-chunk warning only. README/runbook no longer misstate v0.2.4 as the latest unpublished release.
 - L7 — Independent release-preparation verifier PASS for S1/R1: six versions, unchanged dependency diffs, accurate proof limitations, unchanged workflow/security, diff check. Its overbroad Cargo-lock normalization false result was checked against the actual diff: only root json-scout version changed. No preparation blockers. Remote CI and assets/publication remain unverified until R2/R3.
+- L8 — R1 work-unit commit 7e4f6467271f9218de3058e79606390c3624c5b0 created on feature/environment-indicator. R2 will fast-forward verified main to this release plus this tracking-only transition and push without force. No implementation edits on main.

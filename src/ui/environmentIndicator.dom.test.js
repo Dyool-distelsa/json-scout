@@ -15,6 +15,18 @@ afterEach(() => {
 });
 
 describe('vault environment chrome', () => {
+  it('keeps a decorative environment dot attached to the logo across target changes', () => {
+    const { container, indicator } = setup();
+    const logo = container.querySelector('.environment-brand__logo');
+    const dot = logo.querySelector('.environment-brand__dot');
+    expect(dot).not.toBeNull();
+    expect(dot.getAttribute('aria-hidden')).toBe('true');
+    for (const vault of ['kv-prod', 'kv-qa', 'kv-dev', null]) {
+      indicator.setVault(vault);
+      expect(logo.querySelector('.environment-brand__dot')).toBe(dot);
+    }
+  });
+
   it('starts neutral, with an explicit no-vault label and unchanged title', () => {
     const { container } = setup();
     expect(container.textContent).toContain('JSON Scout');

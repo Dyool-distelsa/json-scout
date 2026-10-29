@@ -11,11 +11,11 @@ Branch: `feature/environment-indicator`; delivery: `single-pr` (user selected on
 
 ## Tasks
 
-- T1 [S1] route:inline status:done commit:pending — Initial environment/title DOM tests; RED observed; original focused 39 and full 908 tests passed.
-- T2 [S1] route:inline status:done commit:pending — Initial badge, top stripe, ordered native title updates and guide; original build and independent structural/lifecycle checks passed; native pixel rendering not claimed.
+- T1 [S1] route:inline status:done commit:8e2cb92 — Initial environment/title DOM tests; RED observed; original focused 39 and full 908 tests passed.
+- T2 [S1] route:inline status:done commit:8e2cb92 — Initial badge, top stripe, ordered native title updates and guide; original build and independent structural/lifecycle checks passed; native pixel rendering not claimed.
 - T3 [S1] route:inline status:dropped commit:n/a — Earlier verification projection superseded by user-reported missing scope; T6 owns complete checks.
-- T4 [S2,S3] route:inline status:in_progress commit:pending — Reset panel/filter on Load without deletion; retain original vault identity per tab and expose environment border/label. RED reproduction observed; regression tests and checks pending.
-- T5 [S4] route:inline status:pending commit:pending — Environment scrollbars, logo dot and finite accessible animation, with focused checks and documentation.
+- T4 [S2,S3] route:inline status:done commit:8e2cb92 — Panel-only reset and original-vault tab cues implemented; observed RED (4 failures), GREEN (91 focused tests), diff check passed; docs included.
+- T5 [S4] route:inline status:in_progress commit:pending — Environment scrollbars, logo dot and finite accessible animation, with focused checks and documentation.
 - T6 [S1-S4] route:independent-verifier status:pending commit:pending — Full suite/build, independent verification, native assessment if available, final commit evidence; actual desktop/pixel proof reported separately.
 
 ## Log
@@ -32,3 +32,4 @@ Branch: `feature/environment-indicator`; delivery: `single-pr` (user selected on
 - L10 — Existing local launch conflict resolved by user: another same-repo Vite held port1420; run only npm run tauri dev. User manually tested prior candidate. Native review previously unavailable (package-local-binary-missing); no lineage created. No local browser automation runner installed.
 - L11 — T4 regression RED: 4 failed / 49 passed (stale filter, pending reset, origin metadata). GREEN: 91 tests across vault panel, panel-to-documents/tab strip integration, documents, tabs and push. Load now resets only panel state before requesting; origin vault is explicitly forwarded on Pull. Invalid input leaves listing/filter/counters unchanged; manual Clear behavior preserved.
 - L12 — User selected "Un único PR — menos recomendado" for future review organization. Delivery strategy is single-pr, no chain strategy. This grants no remote publication. Existing uncommitted indicator and loaded-origin behavior form the first cohesive local work unit; scroll/logo finish is the next.
+- L13 — T5 RED: missing logo dot and scrollbar/animation CSS contracts produced 4 failures / 10 passes. GREEN: 15 tests passed across indicator, CSS contracts and panel/tab integration. Added root-only environment scrollbar tokens (neutral defaults preserved), decorative dot and one-shot 640ms tilt/settle via existing motion scale/global reduced-motion rule. CSS tests are structural, not pixel-rendering evidence. T4/T5 documentation updated; no dependency/permission changes.

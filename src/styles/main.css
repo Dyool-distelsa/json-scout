@@ -281,6 +281,10 @@ textarea {
 [data-vault-environment='stg'] { --vault-color: var(--color-warning); --vault-stripe: var(--vault-color); }
 [data-vault-environment='prod'] { --vault-color: var(--color-error); --vault-stripe: var(--vault-color); }
 [data-vault-environment='unknown'] { --vault-color: var(--color-warning); --vault-stripe: var(--vault-color); }
+:root[data-vault-environment]:not([data-vault-environment='none']) {
+  --color-scrollbar: color-mix(in srgb, var(--vault-color) 78%, var(--color-bg));
+  --color-scrollbar-hover: color-mix(in srgb, var(--vault-color) 95%, var(--color-bg));
+}
 
 .app-header {
   display: flex;
@@ -300,6 +304,7 @@ textarea {
   white-space: nowrap;
 }
 .environment-brand__logo {
+  position: relative;
   display: grid;
   place-items: center;
   width: 26px;
@@ -308,6 +313,22 @@ textarea {
   background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg));
   color: var(--color-accent-text);
   font: 700 14px var(--font-mono);
+  animation: scout-arrive calc(var(--motion-duration-slow) * 2) var(--motion-ease-decelerate) 1 both;
+}
+.environment-brand__dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--color-bg-alt);
+  border-radius: var(--radius-full);
+  background: var(--vault-color);
+}
+@keyframes scout-arrive {
+  from { transform: translateY(3px) rotate(-12deg) scale(0.85); opacity: 0; }
+  65% { transform: translateY(-1px) rotate(4deg) scale(1.06); opacity: 1; }
+  to { transform: translateY(0) rotate(0) scale(1); opacity: 1; }
 }
 .environment-brand__name { font-weight: 600; }
 .environment-badge {

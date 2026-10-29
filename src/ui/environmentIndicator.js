@@ -22,6 +22,10 @@ export function createEnvironmentIndicator(container, { setWindowTitle, onTitleE
   logo.className = 'environment-brand__logo';
   logo.textContent = '{ }';
   logo.setAttribute('aria-hidden', 'true');
+  const dot = document.createElement('span');
+  dot.className = 'environment-brand__dot';
+  dot.setAttribute('aria-hidden', 'true');
+  logo.append(dot);
   const name = document.createElement('span');
   name.className = 'environment-brand__name';
   name.textContent = 'JSON Scout';

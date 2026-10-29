@@ -144,7 +144,9 @@ Once the secrets appear, use **Search secrets** to filter by name (case-insensit
 
 ### Recognize the loaded environment
 
-The header shows a persistent **Vault · DEV / QA / STG / PROD** badge beside the JSON Scout mark, a thin colored top edge, and a matching `[Vault: …]` prefix in the window title. DEV is blue, QA/STG amber, and PROD coral/red, in both themes. The text remains visible independently of color and toolbar scrolling.
+The header shows a persistent **Vault · DEV / QA / STG / PROD** badge beside the JSON Scout mark, a matching dot on the logo, a thin colored top edge, and a `[Vault: …]` prefix in the window title. Scrollbar thumbs, including the editor's, use the loaded environment's color. DEV is blue, QA/STG amber, and PROD coral/red, in both themes. With no vault loaded, the logo dot and scrollbars return to neutral. The text remains visible independently of color and toolbar scrolling.
+
+The logo makes a brief entrance tilt/settle when the app starts; it does not loop or flash. The existing system reduced-motion preference disables that movement.
 
 The environment is **inferred from the loaded vault's name**, using its final hyphen-separated suffix (case-insensitive): `-dev`, `-qa`, `-stg`, or `-prod`. `-main` also means PROD. Other names show amber **UNKNOWN**, never DEV. This is a naming hint, not a verification of Azure infrastructure or permissions, and does not change push confirmation rules.
 

@@ -2,7 +2,7 @@
 
 This is the canonical runbook for installing JSON Scout across machines and for deciding whether the optional Azure Key Vault plugin is ready. It is written for people and for AI agents acting on a user's instructions.
 
-> **Current release status:** `v0.2.4` remains unpublished. The current remote snapshot has five Windows/Linux assets with GitHub-reported SHA-256 digests in an unpublished draft; the separate macOS draft has zero assets. Install only an asset visibly present in a human-approved GitHub release or draft. Do not turn a tag, a draft, or an expected filename into a stable-download claim.
+> **Release selection:** use the [Releases page](https://github.com/Dyool-distelsa/json-scout/releases) to confirm the exact version's current publication state and assets. The [v0.2.9 notes](releases/v0.2.9.md) describe the latest prepared environment-indicator changes and their validation boundaries; the v0.2.4 snapshots below are historical evidence, not the current release status. Install only an asset visibly present in a human-approved release or draft. Never turn a tag, a draft, or an expected filename into a published-download claim.
 
 > **Important before closing or updating:** the Key Vault workspace is cleared when JSON Scout starts and when its main window closes. That includes saved, but unpushed, edits. Push explicitly, or manually export a protected copy with the editor's **File > Save As** before closing or updating. JSON Scout never exports secrets automatically. Protect any backup with the operating system's normal access controls and do not put secret values in logs.
 
@@ -22,7 +22,7 @@ This is the canonical runbook for installing JSON Scout across machines and for 
 | Linux | `.deb`, `.rpm`, and AppImage | Stable target. Use the package format for the installed distribution, or run the AppImage as a user file. |
 | macOS Intel / Apple Silicon | No current release asset; the remote experimental draft has zero assets | Experimental only: ad-hoc signed and not notarized. Both native target builds/tests and DMG creation succeeded in the recorded run, but desktop smoke testing was not done; this is not a universal macOS support promise. |
 
-Remote verification snapshots are recorded in the release notes: stable run `37368459103` succeeded on Windows and Ubuntu and created the unpublished `v0.2.4` draft with five assets and GitHub-reported SHA-256 digests; macOS run `37368447436` succeeded for both native builds/tests and DMG creation for target `d7f5dc8`, but its guarded upload failed and the macOS draft has zero assets. These snapshots are not published download availability. See the [stable notes](releases/v0.2.4.md) and [experimental macOS notes](releases/macos-v0.2.4.md).
+Historical v0.2.4 verification snapshots are recorded in its release notes: stable run `37368459103` succeeded on Windows and Ubuntu and created the unpublished `v0.2.4` draft with five assets and GitHub-reported SHA-256 digests; macOS run `37368447436` succeeded for both native builds/tests and DMG creation for target `d7f5dc8`, but its guarded upload failed and the macOS draft has zero assets. These snapshots are not published download availability. See the [stable notes](releases/v0.2.4.md) and [experimental macOS notes](releases/macos-v0.2.4.md).
 
 ### Runtime install versus source build
 

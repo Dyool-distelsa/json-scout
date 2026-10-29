@@ -4,7 +4,7 @@ A lightweight cross-platform (Windows and Linux) desktop JSON toolbox, built to 
 
 ## Release status
 
-The next combined `v0.2.4` release is prepared but not published. Remote verification produced a five-asset Windows/Linux draft with GitHub-reported SHA-256 digests, but it is not a published stable release. The separate macOS draft currently has zero assets. See the [v0.2.4 preparation notes](docs/releases/v0.2.4.md) and [macOS v0.2.4 experimental notes](docs/releases/macos-v0.2.4.md) for the current status.
+See the [Releases page](https://github.com/Dyool-distelsa/json-scout/releases) for published versions and available Windows/Linux installers. The [v0.2.9 notes](docs/releases/v0.2.9.md) describe the Vault environment indicators and clean panel transitions, including validation limitations. macOS remains a separate experimental target; the [macOS v0.2.4 notes](docs/releases/macos-v0.2.4.md) are historical preparation evidence, not a current download promise.
 
 ## Quick install
 

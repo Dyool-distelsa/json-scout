@@ -63,10 +63,11 @@ function writeRecentVaults(list) {
  * @param {HTMLElement} container
  * @param {{
  *   invoke: (command: string, args?: object) => Promise<any>,
- *   openFile: (path: string) => Promise<boolean|void>,
+ *   openFile: (path: string, origin: { vaultName: string }) => Promise<boolean|void>,
  *   notify: (message: string, kind?: 'success'|'error'|'info') => void,
  *   isTauri: boolean,
  *   onCleared?: () => void,
+ *   onVaultChanged?: (vault: string|null) => void,
  * }} deps
  *   `onCleared` runs after Clear removed the pulled files, so editors showing
  *   them can be closed.
@@ -76,7 +77,7 @@ function writeRecentVaults(list) {
  *   refreshLocalStates: () => Promise<void>,
  * }}
  */
-export function createVaultPanel(container, { invoke, openFile, notify, isTauri, onCleared }) {
+export function createVaultPanel(container, { invoke, openFile, notify, isTauri, onCleared, onVaultChanged }) {
   container.innerHTML = '';
   const root = el('div', 'vault-panel');
   container.appendChild(root);
@@ -349,7 +350,14 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri,
     searchInput.hidden = state.items.length === 0;
   }
 
+  // Notify only when the loaded target changes, never for typing or hiding
+  // the panel. Clear and session expiry remove the target through this path.
+  let reportedVault;
   function render() {
+    if (reportedVault !== state.vault) {
+      reportedVault = state.vault;
+      onVaultChanged?.(state.vault);
+    }
     renderAuth();
     // The vault name and search stay out of reach until a session exists.
     form.hidden = !isReady();
@@ -487,6 +495,10 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri,
       render();
       return;
     }
+    // Reset only the browser state, not pulled files or open documents.
+    // Do it before the request so stale rows/filter never masquerade as the
+    // next vault while it is loading (including when Load fails).
+    resetPanel();
     state.busy = { kind: 'load' };
     setMessage(null);
     render();
@@ -508,6 +520,15 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri,
       state.busy = null;
       render();
     }
+  }
+
+  function resetPanel() {
+    state.vault = null;
+    state.items = [];
+    state.itemsGen += 1;
+    state.confirmName = null;
+    state.query = '';
+    searchInput.value = '';
   }
 
   /**
@@ -535,13 +556,8 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri,
         if (!confirmed) return;
       }
       await invoke('vault_clean', { vault: null });
-      state.vault = null;
-      state.items = [];
-      state.itemsGen += 1;
-      state.confirmName = null;
-      state.query = '';
+      resetPanel();
       nameInput.value = '';
-      searchInput.value = '';
       onCleared?.();
     } catch (err) {
       handleCallError(err);
@@ -593,7 +609,7 @@ export function createVaultPanel(container, { invoke, openFile, notify, isTauri,
       const current = state.items.find((entry) => entry.name === item.name);
       if (current) current.localState = 'clean';
       state.itemsGen += 1;
-      const opened = await openFile(result.path);
+      const opened = await openFile(result.path, { vaultName: vault });
       if (opened !== false) notify?.(`Pulled "${item.name}" from ${vault}.`, 'success');
     } catch (err) {
       handleCallError(err);

@@ -13,6 +13,7 @@ import { isSupportedPath, kindForPath } from './docKind.js';
  *   title: string,
  *   dirty: boolean,
  *   fromVault: boolean,
+ *   vaultName?: string,
  *   kind: import('./docKind.js').DocKind,
  * }} Tab
  * @typedef {{ tabs: Tab[], activeId: string|null }} TabsState
@@ -92,15 +93,17 @@ export function addUntitled(state, id, { dirty = false, activate = true, atEnd =
  * @param {TabsState} state
  * @param {string} id used only when a new tab is needed
  * @param {string} path
- * @param {{ fromVault?: boolean }} [options]
+ * @param {{ fromVault?: boolean, vaultName?: string }} [options]
  * @returns {{ state: TabsState, tab: Tab, existed: boolean }}
  */
-export function openFileTab(state, id, path, { fromVault = false } = {}) {
+export function openFileTab(state, id, path, { fromVault = false, vaultName } = {}) {
   const existing = findTabByPath(state, path);
   if (existing) {
     return { state: { ...state, activeId: existing.id }, tab: existing, existed: true };
   }
-  const tab = { id, path, title: baseName(path), dirty: false, fromVault, kind: kindForPath(path) };
+  const tab = { id, path, title: baseName(path), dirty: false, fromVault, kind: kindForPath(path),
+    ...(fromVault && vaultName ? { vaultName } : {}),
+  };
   return { state: insert(state, tab, true), tab, existed: false };
 }
 

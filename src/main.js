@@ -27,6 +27,7 @@ import { initRightPanel } from './ui/rightPanel.js';
 import { initDragAndDrop } from './ui/dragdrop.js';
 import { openSettingsDialog, openHelpDialog } from './ui/appDialogs.js';
 import { createVaultPanel } from './ui/vaultPanel.js';
+import { createEnvironmentIndicator } from './ui/environmentIndicator.js';
 import { installCloseGuard } from './ui/closeGuard.js';
 import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
 import { createDocuments } from './ui/documents.js';
@@ -119,6 +120,16 @@ function writeSetting(key, value) {
 }
 
 const toast = mountToastContainer(document.getElementById('toast-container'));
+
+const environmentIndicator = createEnvironmentIndicator(document.getElementById('environment-indicator'), {
+  ...(isTauriRuntime() ? {
+    setWindowTitle: async (title) => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow().setTitle(title);
+    },
+    onTitleError: () => toast.showToast('Could not update the window title. Check the vault indicator in the header.', 'error'),
+  } : {}),
+});
 
 const statusBar = createStatusBar(document.getElementById('statusbar'));
 updateFileName(state.currentPath);
@@ -241,10 +252,11 @@ const rightPanel = initRightPanel({
 
 
 const vaultPanel = createVaultPanel(document.getElementById('sidebar-vault'), {
+  onVaultChanged: (vault) => environmentIndicator.setVault(vault),
   invoke: tauriInvoke,
   // A pull the user asked for always shows the pulled text, even over edits
   // in an open tab (pulling over local edits is confirmed by the panel).
-  openFile: (path) => loadFileFromDisk(path, { fromVault: true, replace: true }),
+  openFile: (path, origin) => loadFileFromDisk(path, { fromVault: true, replace: true, ...origin }),
   notify: (msg, kind) => toast.showToast(msg, kind),
   isTauri: isTauriRuntime(),
   // The pulled files are gone: close the tabs that showed them.
@@ -459,7 +471,7 @@ async function tauriInvoke(command, args) {
  */
 function updateFileName(path, untitledTitle = 'Untitled') {
   const name = path ? deriveDisplayFileName(path) : untitledTitle;
-  document.title = path ? `${name} — JSON Scout` : `JSON Scout — ${untitledTitle}`;
+  environmentIndicator.setDocumentTitle(path ? `${name} — JSON Scout` : `JSON Scout — ${untitledTitle}`);
   statusBar.setFileName(name);
 }
 
@@ -981,7 +993,7 @@ function openFileFallback({ compare = false } = {}) {
 /**
  * Open a file in its own tab (or the tab already showing it).
  * @param {string} path
- * @param {{ fromVault?: boolean, replace?: boolean, compare?: boolean }} [options]
+ * @param {{ fromVault?: boolean, vaultName?: string, replace?: boolean, compare?: boolean }} [options]
  *   see `docs.openFile`
  * @returns {Promise<boolean>} whether the file was opened (a failure has
  *   already surfaced its own error toast).

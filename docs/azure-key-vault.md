@@ -142,6 +142,18 @@ The last 8 vaults you loaded appear as buttons under the field. Click one to loa
 
 Once the secrets appear, use **Search secrets** to filter by name (case-insensitive, matches any part of the name). The summary line shows the vault name and how many secrets are listed. A secret that is disabled in Key Vault carries a **disabled** tag.
 
+### Recognize the loaded environment
+
+The header shows a persistent **Vault · DEV / QA / STG / PROD** badge beside the JSON Scout mark, a thin colored top edge, and a matching `[Vault: …]` prefix in the window title. DEV is blue, QA/STG amber, and PROD coral/red, in both themes. The text remains visible independently of color and toolbar scrolling.
+
+The environment is **inferred from the loaded vault's name**, using its final hyphen-separated suffix (case-insensitive): `-dev`, `-qa`, `-stg`, or `-prod`. `-main` also means PROD. Other names show amber **UNKNOWN**, never DEV. This is a naming hint, not a verification of Azure infrastructure or permissions, and does not change push confirmation rules.
+
+The indicator describes the **loaded vault**, not the app build or the currently open document. Editing the name field alone does not change it; a successful Load does. It stays visible when you leave the Vault tab. Each valid **Load** first resets the panel's previous list and search filter, even when reloading the same vault. While loading, or if loading fails, the indicator is neutral **No vault**: no previous list or environment is presented as the new target. Invalid names leave the previous list and filter untouched.
+
+**Load resets only the panel.** It does not delete downloaded files or close documents. Tabs opened by Pull keep an environment-colored top edge and an explicit DEV/QA/STG/PROD (or UNKNOWN) label from their **original vault**, even after you load another vault. Hover a tab to see its source vault. Ordinary local files have no vault label.
+
+The manual **Clear** button is different: it deletes the downloaded working copies and closes tabs marked as vault documents. It asks before discarding unpushed changes. Clear and an expired session that removes the target return the global indicator to neutral and remove the title prefix.
+
 ### 2. Understand the row badges
 
 Each secret has a badge that describes its local working copy.

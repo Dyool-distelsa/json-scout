@@ -319,7 +319,7 @@ describe('vault panel: pushing from the dialog', () => {
       .click();
     await settle();
     expect(ctx.fake.callsOf('vault_pull')).toHaveLength(1);
-    expect(ctx.openFile).toHaveBeenCalledWith('C:\\ws\\kv-dev\\cfg.json');
+    expect(ctx.openFile).toHaveBeenCalledWith('C:\\ws\\kv-dev\\cfg.json', { vaultName: 'kv-dev' });
   });
 
   it('keeps the row modified when the push fails', async () => {

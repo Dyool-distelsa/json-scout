@@ -1,5 +1,6 @@
 import { el, button } from './dom.js';
 import { openModal } from './modal.js';
+import { environmentOf } from './environmentIndicator.js';
 
 /**
  * The row of open documents above the editor. Purely a view: it renders a
@@ -50,6 +51,14 @@ export function createTabStrip(container, { onActivate, onClose, onNew, onContex
         node.classList.toggle('doc-tab--compare', compared);
         node.classList.toggle('doc-tab--dirty', tab.dirty);
         const label = el('span', 'doc-tab__title', tab.title);
+        if (tab.fromVault) {
+          const environment = tab.vaultName ? environmentOf(tab.vaultName) : 'unknown';
+          node.dataset.vaultEnvironment = environment;
+          node.title += ` — Vault: ${tab.vaultName ?? 'unknown'} (${environment.toUpperCase()})`;
+          const origin = el('span', 'doc-tab__environment', environment.toUpperCase());
+          origin.setAttribute('aria-label', `Vault environment: ${environment.toUpperCase()}`);
+          node.append(origin);
+        }
         const dot = el('span', 'doc-tab__dirty', '●');
         dot.setAttribute('aria-label', 'unsaved changes');
         dot.hidden = !tab.dirty;

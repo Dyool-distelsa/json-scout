@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 /** A panel wired to a fake backend that is signed in. */
-function setup({ items = [], openFile = vi.fn(async () => true) } = {}) {
+function setup({ items = [], openFile = vi.fn(async () => true), onVaultChanged = vi.fn() } = {}) {
   const fake = createFakeInvoke();
   fake.on('vault_status', IDENTITY);
   fake.on('vault_list', () => items);
@@ -46,8 +46,9 @@ function setup({ items = [], openFile = vi.fn(async () => true) } = {}) {
     openFile,
     notify,
     isTauri: true,
+    onVaultChanged,
   });
-  return { fake, panel, notify, openFile };
+  return { fake, panel, notify, openFile, onVaultChanged };
 }
 
 /** Activate, wait for the sign-in check and load `vault`. */
@@ -69,6 +70,84 @@ const confirmBox = () => container.querySelector('.vault-confirm');
 const buttonByText = (text) =>
   [...container.querySelectorAll('button')].find((node) => node.textContent === text);
 
+describe('vault panel: environment target notifications', () => {
+  it('reports loaded targets, not live input, and preserves the target when hidden', async () => {
+    const ctx = setup({ items: [item('cfg')] });
+    expect(ctx.onVaultChanged).toHaveBeenLastCalledWith(null);
+    await openVault(ctx, 'kv-prod');
+    expect(ctx.onVaultChanged).toHaveBeenLastCalledWith('kv-prod');
+    container.querySelector('.vault-input').value = 'kv-dev';
+    container.querySelector('.vault-input').dispatchEvent(new Event('input'));
+    ctx.panel.deactivate();
+    expect(ctx.onVaultChanged.mock.calls).toEqual([[null], ['kv-prod']]);
+    expect(ctx.fake.callsOf('vault_list')).toEqual([
+      { command: 'vault_list', args: { vault: 'kv-prod' } },
+    ]);
+  });
+
+  it('clears the previous panel target before switching and leaves no target after a failed switch', async () => {
+    const ctx = setup({ items: [item('cfg')] });
+    await openVault(ctx, 'kv-prod');
+    const pending = ctx.fake.hold('vault_list');
+    submitVaultName('kv-qa');
+    expect(ctx.onVaultChanged).toHaveBeenLastCalledWith(null);
+    pending.reject(new Error('unreachable'));
+    await settle();
+    expect(ctx.onVaultChanged).toHaveBeenLastCalledWith(null);
+    expect(container.querySelector('.vault-results').hidden).toBe(true);
+  });
+
+  it('clears the target after Clear and leaves the previous listing behavior intact', async () => {
+    const ctx = setup({ items: [item('cfg')] });
+    await openVault(ctx);
+    ctx.fake.on('vault_local_changes', []);
+    ctx.fake.on('vault_clean', null);
+    buttonByText('Clear').click();
+    await settle();
+    expect(ctx.onVaultChanged).toHaveBeenLastCalledWith(null);
+    expect(ctx.fake.callsOf('vault_clean')).toEqual([{ command: 'vault_clean', args: { vault: null } }]);
+    expect(container.querySelector('.vault-results').hidden).toBe(true);
+  });
+
+  it('clears the target on session expiry without pulling anything', async () => {
+    const ctx = setup({ items: [item('cfg')] });
+    await openVault(ctx, 'kv-prod');
+    ctx.fake.on('vault_list', () => { throw { kind: 'not_signed_in', message: 'expired' }; });
+    submitVaultName('kv-prod');
+    await settle();
+    expect(ctx.onVaultChanged).toHaveBeenLastCalledWith(null);
+    expect(ctx.fake.callsOf('vault_pull')).toHaveLength(0);
+  });
+});
+
+describe('vault panel: Load resets only the panel', () => {
+  it('invalid names leave the loaded list, filter and counters unchanged', async () => {
+    const ctx = setup({ items: [item('cfg')] });
+    await openVault(ctx);
+    const search = container.querySelector('input[type="search"]');
+    search.value = 'cfg'; search.dispatchEvent(new Event('input'));
+    const previousList = container.querySelector('.vault-list').innerHTML;
+    submitVaultName('bad/name'); await settle();
+    expect(search.value).toBe('cfg');
+    expect(container.querySelector('.vault-list').innerHTML).toBe(previousList);
+    expect(ctx.fake.callsOf('vault_list')).toHaveLength(1);
+    expect(ctx.fake.callsOf('vault_clean')).toHaveLength(0);
+  });
+
+  it('reloads the same vault unfiltered and does not discard files', async () => {
+    const ctx = setup({ items: [item('cfg')] });
+    await openVault(ctx);
+    const search = container.querySelector('input[type="search"]');
+    search.value = 'missing'; search.dispatchEvent(new Event('input'));
+    submitVaultName('kv-dev'); await settle();
+    expect(search.value).toBe('');
+    expect(container.querySelector('.vault-summary').textContent).toBe('kv-dev · 1 secret');
+    expect(pullButton('cfg')).not.toBeNull();
+    expect(ctx.fake.callsOf('vault_list')).toHaveLength(2);
+    expect(ctx.fake.callsOf('vault_clean')).toHaveLength(0);
+  });
+});
+
 describe('vault panel: pull over local edits', () => {
   it('asks before pulling a modified secret and does not call vault_pull until confirmed', async () => {
     const ctx = setup({ items: [item('cfg', 'modified')] });
@@ -87,7 +166,7 @@ describe('vault panel: pull over local edits', () => {
     expect(ctx.fake.callsOf('vault_pull')).toEqual([
       { command: 'vault_pull', args: { vault: 'kv-dev', name: 'cfg' } },
     ]);
-    expect(ctx.openFile).toHaveBeenCalledWith('C:\\ws\\kv\\cfg.json');
+    expect(ctx.openFile).toHaveBeenCalledWith('C:\\ws\\kv\\cfg.json', { vaultName: 'kv-dev' });
   });
 
   it('cancelling the confirmation pulls nothing and puts the row back', async () => {

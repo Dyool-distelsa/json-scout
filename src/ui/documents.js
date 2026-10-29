@@ -233,12 +233,12 @@ export function createDocuments({
    * @param {string} contents
    * With `compare` the file is shown in the compare editor instead, beside the
    * active tab; it resolves false when that file is the active tab itself.
-   * @param {{ fromVault?: boolean, replace?: boolean, compare?: boolean }} [options]
+   * @param {{ fromVault?: boolean, vaultName?: string, replace?: boolean, compare?: boolean }} [options]
    * @returns {boolean}
    */
-  function openFile(path, contents, { fromVault = false, replace = false, compare = false } = {}) {
+  function openFile(path, contents, { fromVault = false, vaultName, replace = false, compare = false } = {}) {
     const before = activeTab(state);
-    const opened = openFileTab(state, newId(), path, { fromVault });
+    const opened = openFileTab(state, newId(), path, { fromVault, vaultName });
     const kind = opened.existed ? opened.tab.kind : kindForPath(path);
     const { tab, existed } = opened;
     if (compare) {
@@ -249,7 +249,9 @@ export function createDocuments({
       } else if (!tab.dirty || replace) {
         if (tab.id === compareId) compareEditor.setState(editor.createState(contents, kind));
         else stashed.set(tab.id, editor.createState(contents, kind));
-        state = updateTab(state, tab.id, { dirty: false });
+        state = updateTab(state, tab.id, { dirty: false, fromVault: tab.fromVault || fromVault,
+          ...(fromVault && vaultName ? { vaultName } : {}),
+        });
       }
       if (tab.id === compareId) {
         render();
@@ -268,7 +270,9 @@ export function createDocuments({
         } else {
           stashed.set(tab.id, editor.createState(contents, kind));
         }
-        state = updateTab(state, tab.id, { dirty: false, fromVault: tab.fromVault || fromVault });
+        state = updateTab(state, tab.id, { dirty: false, fromVault: tab.fromVault || fromVault,
+          ...(fromVault && vaultName ? { vaultName } : {}),
+        });
       }
       if (state.activeId === tab.id) {
         render();

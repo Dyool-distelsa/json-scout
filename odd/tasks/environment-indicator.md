@@ -1,0 +1,34 @@
+# Vault environment indicator
+Objective: complete the requested loaded-vault cues and clean panel transitions without losing open documents.
+Branch: `feature/environment-indicator`; delivery: `single-pr` (user selected one future PR; forecast ~650 authored changed lines including existing work); runner: Vitest + Vite build.
+
+## Specs
+
+- S1 — Initial request: "quiero un indicador que visualmente ayude a saber que estoy en prod, qa o dev, algo que tenga que ver con detalles como el scroll, el logo, etc, proponme ideas". Accepted proposal: label beside the logo, thin top stripe and window title. Source selected: "Destino de conexión / vault (recomendado)". Checks: explicit environment text and persistent chrome; preserve file title and neutral no-vault state.
+- S2 — "agrega una task para que cuando cargues un vault primero le de a clear internamente y limpie el filtro, y si quedaron pestanias de vaults anteriores PRD por ejemplo tenga en la pestania unn color o borde de PROD". Clarification: "me refiero al clear del panel del vault, eso nunca me ha cerrado pestanias, revisa el comportamiento". Checks: panel reset before loading; previous tabs retain an origin cue independent of the newly loaded vault.
+- S3 — Reported failure: "cuando le doy 'load' a un nuevo vault no limpia el filtro y no ejecuta el clear de los vault dentro del panel." User selected: "Solo el panel y filtro; conservar pestañas (recomendado)" with choice description "Vacía la lista anterior antes de cargar, conserva archivos y pestañas con su entorno original. El botón Clear manual mantiene su comportamiento." Checks: clear previous list/filter before pending Load, valid new listing visible unfiltered, invalid input does not reset existing state, no automatic file deletion or tab closure; manual Clear remains unchanged.
+- S4 — "la barra de scroll no toma el color del ambiente , falta el detalle del punto en el logo, ademas crea una animacion con el logo, la que sea". Checks: environment tint on scroll thumbs (including editor), visible environment dot on logo; finite logo animation using existing reduced-motion policy; light/dark themes and neutral state remain usable.
+
+## Tasks
+
+- T1 [S1] route:inline status:done commit:pending — Initial environment/title DOM tests; RED observed; original focused 39 and full 908 tests passed.
+- T2 [S1] route:inline status:done commit:pending — Initial badge, top stripe, ordered native title updates and guide; original build and independent structural/lifecycle checks passed; native pixel rendering not claimed.
+- T3 [S1] route:inline status:dropped commit:n/a — Earlier verification projection superseded by user-reported missing scope; T6 owns complete checks.
+- T4 [S2,S3] route:inline status:in_progress commit:pending — Reset panel/filter on Load without deletion; retain original vault identity per tab and expose environment border/label. RED reproduction observed; regression tests and checks pending.
+- T5 [S4] route:inline status:pending commit:pending — Environment scrollbars, logo dot and finite accessible animation, with focused checks and documentation.
+- T6 [S1-S4] route:independent-verifier status:pending commit:pending — Full suite/build, independent verification, native assessment if available, final commit evidence; actual desktop/pixel proof reported separately.
+
+## Log
+
+- L1 — User original request: "quiero un indicador que visualmente ayude a saber que estoy en prod, qa o dev, algo que tenga que ver con detalles como el scroll, el logo, etc, proponme ideas"
+- L2 — User accepted implementation: "si, demole". Explicit interactive authorization created `feature/environment-indicator` from clean main. No remote publication requested.
+- L3 — User chose "Destino de conexión / vault (recomendado)". Existing Rust suffix convention: -dev, -qa, -stg, -prod; -main is prod; other names unknown. No build-channel inference.
+- L4 — User follow-up verbatim: "agrega una task para que cuando cargues un vault primero le de a clear internamente y limpie el filtro, y si quedaron pestanias de vaults anteriores PRD por ejemplo tenga en la pestania unn color o borde de PROD". Initially backlog only, now implementation authorized by L6.
+- L5 — User correction verbatim: "me refiero al clear del panel del vault, eso nunca me ha cerrado pestanias, revisa el comportamiento". Source manual Clear calls vault_clean and onCleared; main closes fromVault tabs. Prior integrated verifier setup timed out, so no installed-app closure claim.
+- L6 — Current user request verbatim: "listo, funciono, lo probe, no cumples con todo lo solicitiado, cuando le doy 'load' a un nuevo vault no limpia el filtro y no ejecuta el clear de los vault dentro del panel. la barra de scroll no toma el color del ambiente , falta el detalle del punto en el logo, ademas crea una animacion con el logo, la que sea"
+- L7 — Reproduced with real createVaultPanel and jsdom, simulated backend only: load kv-dev, set search dev-config, load kv-qa. stdout: {"filterAfterLoad":"dev-config","summary":"No secrets match \"dev-config\".","cleanCalls":0}; exit 0. No Azure or data deletion executed.
+- L8 — User selected "Solo el panel y filtro; conservar pestañas (recomendado)". Automatic reset is UI-only; do not call vault_clean or onCleared on Load. Manual Clear remains unchanged.
+- L9 — Route: inline sequenced implementation because lifecycle/tab provenance and chrome share main/CSS/environment contracts; no independent disjoint writer units in authorized existing worktrees. Read-only scout maps unread seams; parent preserves existing uncommitted implementation. Large tracking needed to retain accepted scope, safety clarification and separate verification evidence across continuations.
+- L10 — Existing local launch conflict resolved by user: another same-repo Vite held port1420; run only npm run tauri dev. User manually tested prior candidate. Native review previously unavailable (package-local-binary-missing); no lineage created. No local browser automation runner installed.
+- L11 — T4 regression RED: 4 failed / 49 passed (stale filter, pending reset, origin metadata). GREEN: 91 tests across vault panel, panel-to-documents/tab strip integration, documents, tabs and push. Load now resets only panel state before requesting; origin vault is explicitly forwarded on Pull. Invalid input leaves listing/filter/counters unchanged; manual Clear behavior preserved.
+- L12 — User selected "Un único PR — menos recomendado" for future review organization. Delivery strategy is single-pr, no chain strategy. This grants no remote publication. Existing uncommitted indicator and loaded-origin behavior form the first cohesive local work unit; scroll/logo finish is the next.

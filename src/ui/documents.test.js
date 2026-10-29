@@ -75,6 +75,21 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('documents', () => {
+  it('keeps original vault identity across tab switches and promotes a manually opened tab on Pull', () => {
+    const { docs } = setup();
+    docs.openFile('/ws/kv-prod/cfg.json', 'prod', { fromVault: true, vaultName: 'kv-prod' });
+    const prod = docs.active().id;
+    docs.openFile('/ws/kv-qa/cfg.json', 'qa');
+    const qa = docs.active().id;
+    docs.openFile('/ws/kv-qa/cfg.json', 'qa pulled', { fromVault: true, replace: true, vaultName: 'kv-qa' });
+    expect(docs.active()).toMatchObject({ id: qa, fromVault: true, vaultName: 'kv-qa' });
+    docs.activate(prod);
+    expect(docs.active()).toMatchObject({ id: prod, vaultName: 'kv-prod' });
+    docs.openFile('/ws/local.json', 'local');
+    expect(docs.active().vaultName).toBeUndefined();
+    expect(docs.active().fromVault).toBe(false);
+  });
+
   it('inherits Markdown for empty new tabs and defaults their save name to .md', () => {
     const { docs } = setup();
     docs.newUntitled('', { kind: 'markdown' });

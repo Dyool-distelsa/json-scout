@@ -53,6 +53,7 @@ export function createDocuments({
   onError,
   newId = () => newTabId(),
   draftDelayMs = DRAFT_DELAY_MS,
+  keepEmpty = false,
 }) {
   let state = INITIAL_TABS;
   /** Document states of the tabs that are not shown. */
@@ -133,10 +134,10 @@ export function createDocuments({
   }
 
   /** Remove a tab without asking. Keeps at least one tab open. */
-  function drop(id) {
+  function drop(id, { forget = true } = {}) {
     const tab = findTab(state, id);
     if (!tab) return;
-    if (tab.path === null) forgetDraft(id);
+    if (tab.path === null && forget) forgetDraft(id);
     const wasActive = state.activeId === id;
     if (id === compareId) {
       compareId = null;
@@ -145,7 +146,10 @@ export function createDocuments({
     state = closeTab(state, id);
     stashed.delete(id);
     if (state.tabs.length === 0) {
-      newUntitled();
+      if (keepEmpty) {
+        render();
+        onActiveChange(null);
+      } else newUntitled();
       return;
     }
     if (wasActive && state.activeId === compareId) {
@@ -385,6 +389,25 @@ export function createDocuments({
     reorder(id, beforeId = null) {
       state = reorderTab(state, id, beforeId);
       render();
+    },
+    /** Transfer a whole document state, without deleting its recoverable draft. */
+    take(id) {
+      const tab = findTab(state, id);
+      if (!tab) return null;
+      const documentState = id === state.activeId ? editor.getState()
+        : id === compareId ? compareEditor.getState() : stashed.get(id);
+      pendingDrafts.delete(id);
+      drop(id, { forget: false });
+      return { tab, documentState };
+    },
+    /** Adopt a transferred document, preserving selection, history and metadata. */
+    adopt({ tab, documentState }, beforeId = null) {
+      if (findTab(state, tab.id)) return;
+      state = { ...state, tabs: [...state.tabs, tab] };
+      state = reorderTab(state, tab.id, beforeId);
+      stashed.set(tab.id, documentState);
+      show(tab.id);
+      if (tab.path === null && tab.dirty) scheduleDraft(tab.id);
     },
     markEdited,
     requestClose,

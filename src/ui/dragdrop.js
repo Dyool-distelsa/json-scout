@@ -37,6 +37,7 @@ export function initDragAndDrop(dropzoneOverlay, onFileDropped) {
   })();
 
   window.addEventListener('dragover', (e) => {
+    if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
     e.preventDefault();
     dropzoneOverlay.classList.add('active');
   });
@@ -48,6 +49,7 @@ export function initDragAndDrop(dropzoneOverlay, onFileDropped) {
   });
 
   window.addEventListener('drop', (e) => {
+    if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
     e.preventDefault();
     dropzoneOverlay.classList.remove('active');
     const file = [...(e.dataTransfer?.files ?? [])].find((f) => isSupportedPath(f.name));

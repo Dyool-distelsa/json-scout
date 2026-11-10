@@ -30,7 +30,7 @@ import { createVaultPanel } from './ui/vaultPanel.js';
 import { createEnvironmentIndicator } from './ui/environmentIndicator.js';
 import { installCloseGuard } from './ui/closeGuard.js';
 import { createTabStrip, askSaveChanges } from './ui/tabStrip.js';
-import { createDocuments } from './ui/documents.js';
+import { createEditorGroups } from './ui/editorGroups.js';
 import { compareChoices, fileChoices, tabChoices, openComparePicker } from './ui/comparePicker.js';
 import { findTab, tabsToClose } from './ui/tabs.js';
 import { createTauriDraftStore, createLocalDraftStore } from './ui/drafts.js';
@@ -134,12 +134,20 @@ const environmentIndicator = createEnvironmentIndicator(document.getElementById(
 const statusBar = createStatusBar(document.getElementById('statusbar'));
 updateFileName(state.currentPath);
 
-const editor = createEditor(document.getElementById('editor'), {
+const primaryEditor = createEditor(document.getElementById('editor'), {
   doc: '',
   theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
-  onChange: onEditorChange,
-  onPaste: handlePaste,
+  onChange: () => onEditorChange(0),
+  onPaste: (text) => { docs.focusGroup(0); return handlePaste(text); },
 });
+const splitEditor = createEditor(document.getElementById('editor-split'), {
+  doc: '',
+  theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
+  onChange: () => onEditorChange(1),
+  onPaste: (text) => { docs.focusGroup(1); return handlePaste(text); },
+});
+// Toolbar and other global actions follow the group that owns focus.
+const editor = new Proxy({}, { get: (_, key) => (docs.activeGroup() === 1 ? splitEditor : primaryEditor)[key] });
 
 // Diff mode: the compare pane shows another open tab beside the active one.
 const secondaryEditor = createEditor(document.getElementById('editor-secondary'), {
@@ -154,15 +162,23 @@ const secondaryEditor = createEditor(document.getElementById('editor-secondary')
 
 // Open documents: one tab per file or Untitled draft. Untitled text is kept
 // in a recoverable draft (app data folder) until it is saved somewhere.
-const docs = createDocuments({
-  editor,
-  strip: createTabStrip(document.getElementById('doc-tabs'), {
+function makeStrip(index, element) {
+  const focus = () => docs.focusGroup(index);
+  element.addEventListener('pointerdown', focus);
+  return createTabStrip(element, {
     onActivate: (id) => docs.activate(id),
     onClose: (id) => docs.requestClose(id),
-    onNew: () => docs.newUntitled(),
-    onMove: (id, beforeId) => docs.reorder(id, beforeId),
+    onNew: () => { focus(); docs.newUntitled(); },
+    onMove: (id, beforeId) => {
+      if (docs.isSplit()) docs.moveTab(id, index, beforeId);
+      else docs.reorder(id, beforeId);
+    },
+    onSplit: index === 0 ? () => docs.split() : undefined,
+    onMoveOther: () => { focus(); if (docs.isSplit()) docs.moveTab(docs.active()?.id, 1 - index); },
+    onJoin: () => docs.join(),
     onContextMenu: (id, event) => {
-      const state = { tabs: docs.tabs(), activeId: docs.active()?.id ?? null };
+      focus();
+      const state = { tabs: docs.groupTabs(index), activeId: docs.active()?.id ?? null };
       openComparePicker(
         event.currentTarget,
         tabChoices(state, id),
@@ -170,7 +186,15 @@ const docs = createDocuments({
         { heading: findTab(state, id)?.title ?? 'Tab', point: { left: event.clientX, top: event.clientY } }
       );
     },
-  }),
+  });
+}
+const docs = createEditorGroups({
+  editors: [primaryEditor, splitEditor],
+  strips: [makeStrip(0, document.getElementById('doc-tabs')), makeStrip(1, document.getElementById('doc-tabs-split'))],
+  onLayout: (split) => {
+    document.getElementById('split-group').hidden = !split;
+    applyMarkdownView();
+  },
   drafts: isTauriRuntime() ? createTauriDraftStore(tauriInvoke) : createLocalDraftStore(pluginStorage()),
   askSave: (tab) => askSaveChanges(tab.title),
   saveActive: () => saveActiveDocument(),
@@ -537,7 +561,7 @@ const markdownPreview = document.getElementById('md-preview');
 
 /** Whether the rendered preview is on screen (Markdown, Split/Preview, not in Diff). */
 function previewShown() {
-  return state.kind === 'markdown' && !state.diffMode && state.markdownView !== 'raw';
+  return state.kind === 'markdown' && !state.diffMode && !docs.isSplit() && state.markdownView !== 'raw';
 }
 
 /** Show the source, the preview or both, as the active document and view ask. */
@@ -587,7 +611,7 @@ markdownPreview.addEventListener('click', async (event) => {
 });
 
 // Split view: the preview follows the source as it scrolls.
-editor.view.scrollDOM.addEventListener('scroll', () => {
+primaryEditor.view.scrollDOM.addEventListener('scroll', () => {
   if (state.markdownView !== 'split' || !previewShown()) return;
   const source = editor.view.scrollDOM;
   const range = source.scrollHeight - source.clientHeight;
@@ -655,8 +679,9 @@ function onActiveDocumentChange(tab) {
   computeDerivedState();
 }
 
-function onEditorChange() {
-  docs.markEdited();
+function onEditorChange(group) {
+  docs.markEdited({ group });
+  if (docs.activeGroup() !== group) return;
   // Cursor tracking is cheap and users notice lag here immediately, so
   // it stays outside the debounce — only the expensive validate/stats/
   // tree/parse-time work below is throttled.
@@ -665,14 +690,19 @@ function onEditorChange() {
   debouncedComputeDerivedState();
 }
 
-document.getElementById('editor').addEventListener('keyup', () => {
-  const cursor = editor.getCursorPosition();
-  statusBar.setCursor(cursor.line, cursor.column);
-});
-document.getElementById('editor').addEventListener('click', () => {
-  const cursor = editor.getCursorPosition();
-  statusBar.setCursor(cursor.line, cursor.column);
-});
+for (const [index, id] of ['editor', 'editor-split'].entries()) {
+  const container = document.getElementById(id);
+  container.addEventListener('focusin', () => docs.focusGroup(index));
+  container.addEventListener('pointerdown', () => docs.focusGroup(index));
+  container.addEventListener('keyup', () => {
+    const cursor = editor.getCursorPosition();
+    statusBar.setCursor(cursor.line, cursor.column);
+  });
+  container.addEventListener('click', () => {
+    const cursor = editor.getCursorPosition();
+    statusBar.setCursor(cursor.line, cursor.column);
+  });
+}
 
 /**
  * Run `fn`; on success, clear any stale error toast left over from a
@@ -720,7 +750,7 @@ function setEditorContentAndFlush(text) {
 
 // Success-only confirmation: a brief accent glow on the primary editor.
 function flashPrimaryEditor() {
-  flashEditor(document.getElementById('editor'));
+  flashEditor(document.getElementById(docs.activeGroup() === 1 ? 'editor-split' : 'editor'));
 }
 
 /**
@@ -832,7 +862,8 @@ const handlers = {
   },
   themeToggle: () => {
     const next = toggleTheme();
-    editor.setTheme(next);
+    primaryEditor.setTheme(next);
+    splitEditor.setTheme(next);
     secondaryEditor.setTheme(next);
   },
   save: () => saveActiveDocument(),

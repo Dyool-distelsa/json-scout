@@ -11,6 +11,7 @@ import {
   baseName,
   markSaved,
   cycle,
+  reorderTab,
 } from './tabs.js';
 import { guessKind, kindForPath } from './docKind.js';
 
@@ -381,6 +382,10 @@ export function createDocuments({
   return {
     newUntitled,
     openFile,
+    reorder(id, beforeId = null) {
+      state = reorderTab(state, id, beforeId);
+      render();
+    },
     markEdited,
     requestClose,
     closeMany,

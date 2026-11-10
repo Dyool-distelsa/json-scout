@@ -114,6 +114,16 @@ function insert(state, tab, activate, atEnd = false) {
   return { tabs, activeId: activate || state.activeId === null ? tab.id : state.activeId };
 }
 
+/** Move an existing tab before another one, or to the end with null. */
+export function reorderTab(state, id, beforeId = null) {
+  const tab = findTab(state, id);
+  if (!tab || id === beforeId || (beforeId !== null && !findTab(state, beforeId))) return state;
+  const tabs = state.tabs.filter(t => t.id !== id);
+  const index = beforeId === null ? tabs.length : tabs.findIndex(t => t.id === beforeId);
+  tabs.splice(index, 0, tab);
+  return { ...state, tabs };
+}
+
 export function activate(state, id) {
   return findTab(state, id) ? { ...state, activeId: id } : state;
 }

@@ -1315,6 +1315,10 @@ body.is-resizing .right-panel {
   flex-direction: column;
 }
 
+.editor-pane__split { border-left: 2px solid var(--color-border-strong); }
+.editor-pane__split[hidden] { display: none; }
+.doc-tabs--drop { box-shadow: inset 0 -3px var(--color-accent); }
+
 .editor-pane__body {
   position: relative;
   flex: 1;

@@ -16,6 +16,7 @@ import { environmentOf } from './environmentIndicator.js';
  *   `compareId` marks the tab shown in the compare pane (Diff mode).
  */
 export const TAB_DRAG_TYPE = 'application/x-json-scout-tab';
+const stripMoves = new WeakMap();
 
 export function createTabStrip(container, { onActivate, onClose, onNew, onContextMenu, onMove, onSplit, onJoin, onMoveOther }) {
   container.replaceChildren();
@@ -46,6 +47,7 @@ export function createTabStrip(container, { onActivate, onClose, onNew, onContex
   }
   let renderedTabs = [];
   if (onMove) {
+    stripMoves.set(container, onMove);
     container.addEventListener('dragover', (event) => {
       if (!Array.from(event.dataTransfer?.types ?? []).includes(TAB_DRAG_TYPE)) return;
       event.preventDefault();
@@ -94,7 +96,45 @@ export function createTabStrip(container, { onActivate, onClose, onNew, onContex
         node.dataset.id = tab.id;
         if (onMove) {
           node.draggable = true;
+          let suppressClick = false;
+          let pointerActive = false;
+          node.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0 || event.target.closest('button')) return;
+            const startX = event.clientX, startY = event.clientY;
+            let dragging = false, highlighted = null;
+            pointerActive = true;
+            const move = (e) => {
+              if (!dragging && Math.hypot(e.clientX - startX, e.clientY - startY) < 6) return;
+              dragging = true;
+              const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.doc-tabs');
+              if (highlighted !== target) highlighted?.classList.remove('doc-tabs--drop');
+              highlighted = target && stripMoves.has(target) ? target : null;
+              highlighted?.classList.add('doc-tabs--drop');
+              e.preventDefault();
+            };
+            const finish = (e) => {
+              document.removeEventListener('pointermove', move);
+              document.removeEventListener('pointerup', finish);
+              document.removeEventListener('pointercancel', finish);
+              pointerActive = false;
+              highlighted?.classList.remove('doc-tabs--drop');
+              if (dragging) {
+                suppressClick = true;
+                const hit = document.elementFromPoint(e.clientX, e.clientY);
+                const target = hit?.closest('.doc-tabs');
+                if (e.type === 'pointerup' && target && stripMoves.has(target)) {
+                  stripMoves.get(target)(tab.id, hit.closest('[role="tab"]')?.dataset.id ?? null);
+                }
+                setTimeout(() => { suppressClick = false; }, 0);
+              }
+            };
+            document.addEventListener('pointermove', move);
+            document.addEventListener('pointerup', finish);
+            document.addEventListener('pointercancel', finish);
+          });
+          node.addEventListener('click', (event) => { if (suppressClick) { event.stopImmediatePropagation(); event.preventDefault(); } }, true);
           node.addEventListener('dragstart', (event) => {
+            if (pointerActive) { event.preventDefault(); return; }
             if (!event.dataTransfer) return;
             event.dataTransfer.setData(TAB_DRAG_TYPE, tab.id);
             event.dataTransfer.effectAllowed = 'move';

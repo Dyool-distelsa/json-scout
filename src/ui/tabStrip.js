@@ -15,7 +15,9 @@ import { environmentOf } from './environmentIndicator.js';
  * @returns {{ render: (state: import('./tabs.js').TabsState, compareId?: string|null) => void }}
  *   `compareId` marks the tab shown in the compare pane (Diff mode).
  */
-export function createTabStrip(container, { onActivate, onClose, onNew, onContextMenu }) {
+export const TAB_DRAG_TYPE = 'application/x-json-scout-tab';
+
+export function createTabStrip(container, { onActivate, onClose, onNew, onContextMenu, onMove, onSplit, onJoin, onMoveOther }) {
   container.replaceChildren();
   const list = el('div', 'doc-tabs__list');
   list.setAttribute('role', 'tablist');
@@ -24,6 +26,45 @@ export function createTabStrip(container, { onActivate, onClose, onNew, onContex
   add.title = 'New document';
   add.setAttribute('aria-label', 'New document');
   container.append(list, add);
+  if (onSplit) {
+    const split = button('◫', 'doc-tabs__new', onSplit);
+    split.title = 'Split editor — move active tab to the other group';
+    split.setAttribute('aria-label', 'Split editor');
+    container.append(split);
+  }
+  if (onMoveOther) {
+    const move = button('⇄', 'doc-tabs__new', onMoveOther);
+    move.title = 'Move active tab to the other group';
+    move.setAttribute('aria-label', 'Move tab to other group');
+    container.append(move);
+  }
+  if (onJoin) {
+    const join = button('⊟', 'doc-tabs__new', onJoin);
+    join.title = 'Join editor groups';
+    join.setAttribute('aria-label', 'Join editor groups');
+    container.append(join);
+  }
+  let renderedTabs = [];
+  if (onMove) {
+    container.addEventListener('dragover', (event) => {
+      if (!Array.from(event.dataTransfer?.types ?? []).includes(TAB_DRAG_TYPE)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      container.classList.add('doc-tabs--drop');
+    });
+    container.addEventListener('dragleave', (event) => {
+      if (!container.contains(event.relatedTarget)) container.classList.remove('doc-tabs--drop');
+    });
+    container.addEventListener('drop', (event) => {
+      container.classList.remove('doc-tabs--drop');
+      const id = event.dataTransfer?.getData(TAB_DRAG_TYPE);
+      if (!id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const target = event.target.closest?.('[role="tab"]');
+      onMove(id, target?.dataset.id ?? null);
+    });
+  }
 
   list.addEventListener('keydown', (event) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -31,17 +72,35 @@ export function createTabStrip(container, { onActivate, onClose, onNew, onContex
     const index = tabs.indexOf(document.activeElement);
     if (index === -1) return;
     event.preventDefault();
-    const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    const step = event.key === 'ArrowRight' ? 1 : -1;
+    if (event.altKey && event.shiftKey && onMove) {
+      const target = index + step;
+      if (target < 0 || target >= tabs.length) return;
+      onMove(tabs[index].dataset.id, step < 0 ? renderedTabs[target].id : renderedTabs[target + 1]?.id ?? null);
+      list.querySelector(`[data-id="${tabs[index].dataset.id}"]`)?.focus();
+      return;
+    }
+    const next = tabs[(index + step + tabs.length) % tabs.length];
     onActivate(next.dataset.id);
     list.querySelector(`[data-id="${next.dataset.id}"]`)?.focus();
   });
 
   function render(state, compareId = null) {
+    renderedTabs = state.tabs;
     list.replaceChildren(
       ...state.tabs.map((tab) => {
         const selected = tab.id === state.activeId;
         const node = el('div', 'doc-tab');
         node.dataset.id = tab.id;
+        if (onMove) {
+          node.draggable = true;
+          node.addEventListener('dragstart', (event) => {
+            if (!event.dataTransfer) return;
+            event.dataTransfer.setData(TAB_DRAG_TYPE, tab.id);
+            event.dataTransfer.effectAllowed = 'move';
+          });
+          node.addEventListener('dragend', () => container.classList.remove('doc-tabs--drop'));
+        }
         node.setAttribute('role', 'tab');
         node.setAttribute('aria-selected', String(selected));
         node.tabIndex = selected ? 0 : -1;

@@ -160,6 +160,7 @@ const docs = createDocuments({
     onActivate: (id) => docs.activate(id),
     onClose: (id) => docs.requestClose(id),
     onNew: () => docs.newUntitled(),
+    onMove: (id, beforeId) => docs.reorder(id, beforeId),
     onContextMenu: (id, event) => {
       const state = { tabs: docs.tabs(), activeId: docs.active()?.id ?? null };
       openComparePicker(

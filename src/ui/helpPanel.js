@@ -118,11 +118,14 @@ export function createHelpPanel(container, { isTauri, notify }) {
   }
   keys.appendChild(table);
 
+  const tabs = section('Document tabs');
+  tabs.appendChild(el('p', 'help-text', 'Drag a tab onto another tab to place it before that tab, or onto empty strip space to move it to the end. With a tab focused, Alt+Shift+Left/Right reorders it without changing the document.'));
+
   // Credits
   const credits = section('Credits');
   credits.appendChild(el('p', 'help-text', `Created and maintained by ${AUTHOR}, owner of the repository.`));
   credits.appendChild(el('p', 'help-text help-text--dim', 'Released under the MIT License.'));
 
-  root.append(about, credits, repo, contrib, keys);
+  root.append(about, credits, repo, contrib, keys, tabs);
   container.appendChild(root);
 }
